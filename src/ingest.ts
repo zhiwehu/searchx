@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { config } from "./config.js";
 import { catalog } from "./catalog.js";
-import { assetIdForPath } from "./ids.js";
+import { assetIdForPath, rootIdForPath } from "./ids.js";
 import { detectKind, getSourceExt, guessMimeType, shouldTryConvert } from "./fileKinds.js";
 import type {
   ConversionStatus,
@@ -61,9 +61,10 @@ export async function ingestPath(request: IngestRequest): Promise<IngestResult> 
     return syncRoot(root);
   }
 
-  const root = await catalog.addRoot({
-    path: path.dirname(source),
-    name: path.basename(path.dirname(source)),
+  const parentPath = path.dirname(source);
+  const root = (await catalog.getRoot(rootIdForPath(parentPath))) ?? await catalog.addRoot({
+    path: parentPath,
+    name: path.basename(parentPath),
     recursive: false,
     enabled: true
   });
