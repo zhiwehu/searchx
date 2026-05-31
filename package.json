@@ -1,0 +1,25 @@
+{
+  "name": "searchx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first natural language search for documents and media using MarkItDown and QMD.",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "cli": "node dist/src/cli.js",
+    "start": "node dist/src/server.js",
+    "test": "tsx --test tests/**/*.test.ts"
+  },
+  "dependencies": {
+    "@tobilu/qmd": "^2.5.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

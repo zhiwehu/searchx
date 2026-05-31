@@ -1,0 +1,3 @@
+SearchX keeps original files read-only.
+It mirrors converted Markdown into its own .searchx directory.
+Natural language search can find documents by extracted content and metadata.

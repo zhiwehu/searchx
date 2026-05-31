@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.searchx/
+.venv/
+.env
+.searchx-server.*
+__pycache__/
+*.pyc
