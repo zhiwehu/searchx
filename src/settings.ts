@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import type { RuntimeSettings } from "./types.js";
 
 const envPath = path.resolve(process.cwd(), ".env");
+const maskedSecret = "********";
 
 const managedKeys = [
   "SEARCHX_PYTHON",
@@ -36,7 +37,8 @@ export function getRuntimeSettings(): RuntimeSettings {
     llmModel: process.env.SEARCHX_LLM_MODEL ?? "",
     llmPrompt: process.env.SEARCHX_LLM_PROMPT ?? "",
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? "",
-    openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+    openaiApiKey: process.env.OPENAI_API_KEY ? maskedSecret : "",
+    openaiApiKeySet: Boolean(process.env.OPENAI_API_KEY),
     qmdEmbedOnIngest: process.env.SEARCHX_QMD_EMBED_ON_INGEST === "1",
     qmdChunkStrategy: process.env.SEARCHX_QMD_CHUNK_STRATEGY ?? config.qmdChunkStrategy,
     qmdEmbedModel: process.env.QMD_EMBED_MODEL ?? "",
@@ -49,9 +51,12 @@ export function getRuntimeSettings(): RuntimeSettings {
 
 export async function updateRuntimeSettings(patch: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
   const current = getRuntimeSettings();
+  const openaiApiKey = normalizeSecretPatch(patch.openaiApiKey, process.env.OPENAI_API_KEY ?? "");
   const next: RuntimeSettings = {
     ...current,
-    ...patch
+    ...patch,
+    openaiApiKey,
+    openaiApiKeySet: Boolean(openaiApiKey)
   };
 
   const envValues: Record<ManagedKey, string> = {
@@ -95,6 +100,11 @@ function isTruthy(value: string | undefined): boolean {
 
 function isFalse(value: string | undefined): boolean {
   return value === "0" || value === "false" || value === "FALSE" || value === "no" || value === "NO";
+}
+
+function normalizeSecretPatch(value: string | undefined, current: string): string {
+  if (value === undefined || value === maskedSecret) return current;
+  return value;
 }
 
 async function writeEnv(values: Record<ManagedKey, string>): Promise<void> {

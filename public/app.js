@@ -286,26 +286,29 @@ async function loadSettings() {
 
 async function saveSettings() {
   await withBusy("保存配置", async () => {
+    const body = {
+      pythonBin: els.pythonBinInput.value.trim(),
+      markitdownPlugins: els.markitdownPluginsInput.checked,
+      markitdownArchives: els.markitdownArchivesInput.checked,
+      markitdownMedia: els.markitdownMediaInput.checked,
+      markitdownUseLlm: els.markitdownUseLlmInput.checked,
+      openaiBaseUrl: els.openaiBaseUrlInput.value.trim(),
+      llmModel: els.llmModelInput.value.trim(),
+      llmPrompt: els.llmPromptInput.value.trim(),
+      qmdEmbedOnIngest: els.qmdEmbedDefaultInput.checked,
+      qmdEmbedModel: els.qmdEmbedModelInput.value.trim(),
+      qmdRerankModel: els.qmdRerankModelInput.value.trim(),
+      qmdGenerateModel: els.qmdGenerateModelInput.value.trim(),
+      qmdChunkStrategy: els.qmdChunkStrategyInput.value.trim() || "auto",
+      qmdLlamaGpu: els.qmdGpuInput.value,
+      qmdForceCpu: els.qmdForceCpuInput.checked
+    };
+    const openaiApiKey = els.openaiApiKeyInput.value.trim();
+    if (openaiApiKey) body.openaiApiKey = openaiApiKey;
+
     const data = await api("/api/settings", {
       method: "PUT",
-      body: {
-        pythonBin: els.pythonBinInput.value.trim(),
-        markitdownPlugins: els.markitdownPluginsInput.checked,
-        markitdownArchives: els.markitdownArchivesInput.checked,
-        markitdownMedia: els.markitdownMediaInput.checked,
-        markitdownUseLlm: els.markitdownUseLlmInput.checked,
-        openaiBaseUrl: els.openaiBaseUrlInput.value.trim(),
-        openaiApiKey: els.openaiApiKeyInput.value,
-        llmModel: els.llmModelInput.value.trim(),
-        llmPrompt: els.llmPromptInput.value.trim(),
-        qmdEmbedOnIngest: els.qmdEmbedDefaultInput.checked,
-        qmdEmbedModel: els.qmdEmbedModelInput.value.trim(),
-        qmdRerankModel: els.qmdRerankModelInput.value.trim(),
-        qmdGenerateModel: els.qmdGenerateModelInput.value.trim(),
-        qmdChunkStrategy: els.qmdChunkStrategyInput.value.trim() || "auto",
-        qmdLlamaGpu: els.qmdGpuInput.value,
-        qmdForceCpu: els.qmdForceCpuInput.checked
-      }
+      body
     });
     renderSettings(data.settings);
     renderModelNotes(data.modelNotes ?? []);
@@ -321,7 +324,8 @@ function renderSettings(settings) {
   els.markitdownMediaInput.checked = settings.markitdownMedia !== false;
   els.markitdownUseLlmInput.checked = Boolean(settings.markitdownUseLlm);
   els.openaiBaseUrlInput.value = settings.openaiBaseUrl ?? "";
-  els.openaiApiKeyInput.value = settings.openaiApiKey ?? "";
+  els.openaiApiKeyInput.value = "";
+  els.openaiApiKeyInput.placeholder = settings.openaiApiKeySet ? "已配置，留空保持不变" : "本地服务可填 local";
   els.llmModelInput.value = settings.llmModel ?? "";
   els.llmPromptInput.value = settings.llmPrompt ?? "";
   els.qmdEmbedDefaultInput.checked = Boolean(settings.qmdEmbedOnIngest);

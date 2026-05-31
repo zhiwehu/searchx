@@ -92,6 +92,10 @@ async function routeApi(
 
   const rawMatch = /^\/api\/assets\/([^/]+)\/raw$/.exec(url.pathname);
   if (method === "GET" && rawMatch) {
+    if (!config.allowRawFileAccess) {
+      sendJson(response, 403, { error: "Raw file access is disabled. Set SEARCHX_ALLOW_RAW_FILE_ACCESS=1 to enable it." });
+      return;
+    }
     const asset = await catalog.get(rawMatch[1]);
     if (!asset) {
       sendJson(response, 404, { error: "Asset not found" });

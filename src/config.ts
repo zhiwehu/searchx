@@ -23,5 +23,6 @@ export const config = {
   pythonBin: process.env.SEARCHX_PYTHON ?? "python",
   converterScript: path.join(cwd, "python", "convert_markitdown.py"),
   converterTimeoutMs: Number.parseInt(process.env.SEARCHX_CONVERTER_TIMEOUT_MS ?? "120000", 10),
+  allowRawFileAccess: process.env.SEARCHX_ALLOW_RAW_FILE_ACCESS === "1",
   maxJsonBodyBytes: 1_000_000
 };
