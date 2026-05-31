@@ -132,6 +132,7 @@ export type RuntimeSettings = {
   llmPrompt: string;
   openaiBaseUrl: string;
   openaiApiKey: string;
+  openaiApiKeySet: boolean;
   qmdEmbedOnIngest: boolean;
   qmdChunkStrategy: string;
   qmdEmbedModel: string;
