@@ -55,7 +55,7 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
     throw Object.assign(new Error("Missing query"), { statusCode: 400 });
   }
 
-  const modeRequested: SearchMode = request.mode ?? "hybrid";
+  const modeRequested = parseSearchMode(request.mode);
   let mode: SearchMode = modeRequested;
   let warning: string | undefined;
   const limit = clampInteger(request.limit, 1, 50, 10);
@@ -98,6 +98,12 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
     modeUsed: mode,
     warning
   };
+}
+
+export function parseSearchMode(value: unknown): SearchMode {
+  if (value === undefined || value === null || value === "") return "hybrid";
+  if (value === "lex" || value === "vector" || value === "hybrid") return value;
+  throw Object.assign(new Error("Invalid search mode. Expected one of: lex, vector, hybrid."), { statusCode: 400 });
 }
 
 export async function getQmdStatus(): Promise<unknown> {

@@ -1,7 +1,6 @@
 import { catalog } from "./catalog.js";
 import { ingestPath, syncConfiguredRoots } from "./ingest.js";
-import { closeQmdStore, getQmdStatus, refreshQmdIndex, searchQmd } from "./qmdService.js";
-import type { SearchMode } from "./types.js";
+import { closeQmdStore, getQmdStatus, parseSearchMode, refreshQmdIndex, searchQmd } from "./qmdService.js";
 
 type ParsedArgs = {
   positional: string[];
@@ -99,7 +98,7 @@ async function handleSearch(args: ParsedArgs): Promise<void> {
   const query = args.positional.join(" ").trim();
   if (!query) throw new Error("Missing search query.");
 
-  const mode = (stringFlag(args, "mode") ?? "hybrid") as SearchMode;
+  const mode = parseSearchMode(stringFlag(args, "mode"));
   const limit = numberFlag(args, "limit", 10);
   printJson(await searchQmd({ query, mode, limit }));
 }
