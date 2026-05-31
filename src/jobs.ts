@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { syncConfiguredRoots } from "./ingest.js";
 import { refreshQmdIndex } from "./qmdService.js";
+import { runWorkflowTask } from "./workflowQueue.js";
 import type { ProgressJob, SyncProgress, SyncRequest, SyncResult } from "./types.js";
 
 const jobs = new Map<string, ProgressJob<SyncResult>>();
@@ -27,7 +28,7 @@ export function startSyncJob(request: SyncRequest): ProgressJob<SyncResult> {
   };
 
   jobs.set(job.id, job);
-  void runSyncJob(job, request);
+  void runWorkflowTask(() => runSyncJob(job, request));
   return job;
 }
 
