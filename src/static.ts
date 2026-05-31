@@ -17,7 +17,7 @@ export async function serveStatic(urlPath: string, response: ServerResponse): Pr
   const cleanPath = urlPath === "/" ? "/index.html" : decodeURIComponent(urlPath);
   const resolved = path.resolve(publicRoot, `.${cleanPath}`);
 
-  if (!resolved.startsWith(publicRoot)) return false;
+  if (!isPathInsideRoot(publicRoot, resolved)) return false;
 
   try {
     const stat = await fsp.stat(resolved);
@@ -47,4 +47,9 @@ export async function streamFile(filePath: string, response: ServerResponse): Pr
     "cache-control": "private, max-age=60"
   });
   fs.createReadStream(filePath).pipe(response);
+}
+
+export function isPathInsideRoot(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
