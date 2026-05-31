@@ -9,6 +9,7 @@ import { getQmdStatus, refreshQmdIndex, searchQmd, closeQmdStore } from "./qmdSe
 import { getJob, startSyncJob } from "./jobs.js";
 import { getRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { serveStatic, streamFile } from "./static.js";
+import { runWorkflowTask } from "./workflowQueue.js";
 import type { AddRootRequest, IngestRequest, RuntimeSettings, SearchRequest, SyncRequest } from "./types.js";
 
 const server = http.createServer(async (request, response) => {
@@ -82,10 +83,13 @@ async function routeApi(
 
   const rootMatch = /^\/api\/roots\/([^/]+)$/.exec(url.pathname);
   if (method === "DELETE" && rootMatch) {
-    const removed = await catalog.removeRoot(rootMatch[1]);
-    await cleanupMarkdownAssets(removed.assets);
-    await fs.rm(path.join(config.markdownDir, rootMatch[1]), { recursive: true, force: true }).catch(() => undefined);
-    await refreshQmdIndex({ embed: false }).catch(() => undefined);
+    const removed = await runWorkflowTask(async () => {
+      const result = await catalog.removeRoot(rootMatch[1]);
+      await cleanupMarkdownAssets(result.assets);
+      await fs.rm(path.join(config.markdownDir, rootMatch[1]), { recursive: true, force: true }).catch(() => undefined);
+      await refreshQmdIndex({ embed: false }).catch(() => undefined);
+      return result;
+    });
     sendJson(response, 200, removed);
     return;
   }
@@ -119,18 +123,24 @@ async function routeApi(
 
   if (method === "POST" && url.pathname === "/api/ingest") {
     const body = await readJsonBody<IngestRequest>(request);
-    const result = await ingestPath(body);
-    result.index = await refreshQmdIndex({ embed: body.embed ?? config.qmdEmbedOnIngest });
+    const result = await runWorkflowTask(async () => {
+      const ingestResult = await ingestPath(body);
+      ingestResult.index = await refreshQmdIndex({ embed: body.embed ?? config.qmdEmbedOnIngest });
+      return ingestResult;
+    });
     sendJson(response, 200, result);
     return;
   }
 
   if (method === "POST" && url.pathname === "/api/sync") {
     const body = await readJsonBody<SyncRequest>(request);
-    const result = await syncConfiguredRoots(body);
-    result.index = await refreshQmdIndex({
-      embed: body.embed ?? config.qmdEmbedOnIngest,
-      force: body.force
+    const result = await runWorkflowTask(async () => {
+      const syncResult = await syncConfiguredRoots(body);
+      syncResult.index = await refreshQmdIndex({
+        embed: body.embed ?? config.qmdEmbedOnIngest,
+        force: body.force
+      });
+      return syncResult;
     });
     sendJson(response, 200, result);
     return;
@@ -159,7 +169,7 @@ async function routeApi(
 
   if (method === "POST" && url.pathname === "/api/index") {
     const body = await readJsonBody<{ embed?: boolean; force?: boolean }>(request);
-    sendJson(response, 200, await refreshQmdIndex({ embed: body.embed, force: body.force }));
+    sendJson(response, 200, await runWorkflowTask(() => refreshQmdIndex({ embed: body.embed, force: body.force })));
     return;
   }
 

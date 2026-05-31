@@ -123,7 +123,7 @@ export class Catalog {
   async save(): Promise<void> {
     const data = await this.load();
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.tmp`;
+    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     await fs.writeFile(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
     await fs.rename(tempPath, this.filePath);
   }

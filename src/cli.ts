@@ -1,6 +1,7 @@
 import { catalog } from "./catalog.js";
 import { ingestPath, syncConfiguredRoots } from "./ingest.js";
 import { closeQmdStore, getQmdStatus, parseSearchMode, refreshQmdIndex, searchQmd } from "./qmdService.js";
+import { runWorkflowTask } from "./workflowQueue.js";
 
 type ParsedArgs = {
   positional: string[];
@@ -32,7 +33,7 @@ async function main(): Promise<void> {
       await handleSync(args);
       return;
     case "index":
-      printJson(await refreshQmdIndex({ embed: flagEnabled(args, "embed"), force: flagEnabled(args, "force") }));
+      printJson(await runWorkflowTask(() => refreshQmdIndex({ embed: flagEnabled(args, "embed"), force: flagEnabled(args, "force") })));
       return;
     case "search":
       await handleSearch(args);
@@ -71,25 +72,31 @@ async function handleRoot(args: ParsedArgs): Promise<void> {
 async function handleIngest(args: ParsedArgs): Promise<void> {
   const [sourcePath] = args.positional;
   if (!sourcePath) throw new Error("Missing path.");
-  const result = await ingestPath({
-    path: sourcePath,
-    recursive: !flagEnabled(args, "no-recursive"),
-    embed: flagEnabled(args, "embed")
+  const result = await runWorkflowTask(async () => {
+    const ingestResult = await ingestPath({
+      path: sourcePath,
+      recursive: !flagEnabled(args, "no-recursive"),
+      embed: flagEnabled(args, "embed")
+    });
+    if (flagEnabled(args, "embed")) {
+      ingestResult.index = await refreshQmdIndex({ embed: true, force: flagEnabled(args, "force") });
+    }
+    return ingestResult;
   });
-  if (flagEnabled(args, "embed")) {
-    result.index = await refreshQmdIndex({ embed: true, force: flagEnabled(args, "force") });
-  }
   printJson(result);
 }
 
 async function handleSync(args: ParsedArgs): Promise<void> {
-  const result = await syncConfiguredRoots({
-    embed: flagEnabled(args, "embed"),
-    force: flagEnabled(args, "force")
-  });
-  result.index = await refreshQmdIndex({
-    embed: flagEnabled(args, "embed"),
-    force: flagEnabled(args, "force")
+  const result = await runWorkflowTask(async () => {
+    const syncResult = await syncConfiguredRoots({
+      embed: flagEnabled(args, "embed"),
+      force: flagEnabled(args, "force")
+    });
+    syncResult.index = await refreshQmdIndex({
+      embed: flagEnabled(args, "embed"),
+      force: flagEnabled(args, "force")
+    });
+    return syncResult;
   });
   printJson(result);
 }
