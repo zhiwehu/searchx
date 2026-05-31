@@ -237,7 +237,9 @@ def write_sidecar(args: argparse.Namespace, text: str, status: str, error: str |
     else:
         body.append("No extractable text is available yet. The file is indexed by metadata only.")
 
-    output.write_text("\n".join(frontmatter + body) + "\n", encoding="utf-8")
+    temp_output = output.with_name(f"{output.name}.{os.getpid()}.tmp")
+    temp_output.write_text("\n".join(frontmatter + body) + "\n", encoding="utf-8")
+    temp_output.replace(output)
 
 
 def main() -> int:

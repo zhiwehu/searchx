@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { config } from "./config.js";
 import { catalog } from "./catalog.js";
 import { assetIdForPath } from "./ids.js";
@@ -290,19 +290,27 @@ async function convertOne(
   const relativePath = getRelativePath(root, sourcePath);
   const markdownPath = getMarkdownPath(root, sourcePath);
   await fs.mkdir(path.dirname(markdownPath), { recursive: true });
+  const tempMarkdownPath = `${markdownPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
 
-  const converterResult = await runConverter({
-    id,
-    rootId: root.id,
-    kind,
-    sourcePath,
-    relativePath,
-    markdownPath,
-    title,
-    size: stat.size,
-    mtimeMs: stat.mtimeMs,
-    mode
-  });
+  let converterResult: { status: ConversionStatus; error?: string };
+  try {
+    converterResult = await runConverter({
+      id,
+      rootId: root.id,
+      kind,
+      sourcePath,
+      relativePath,
+      markdownPath: tempMarkdownPath,
+      title,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      mode
+    });
+    await fs.rename(tempMarkdownPath, markdownPath);
+  } catch (error) {
+    await fs.rm(tempMarkdownPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 
   const now = new Date().toISOString();
   return {
@@ -355,10 +363,13 @@ function runConverter(args: {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timeout: NodeJS.Timeout | undefined;
+    let killFallback: NodeJS.Timeout | undefined;
+    let timeoutError: Error | undefined;
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      if (killFallback) clearTimeout(killFallback);
       callback();
     };
 
@@ -404,10 +415,17 @@ function runConverter(args: {
     });
     child.on("error", (error) => finish(() => reject(error)));
     timeout = setTimeout(() => {
-      child.kill();
-      finish(() => reject(new Error(`converter timed out after ${config.converterTimeoutMs}ms: ${path.basename(args.sourcePath)}`)));
+      timeoutError = new Error(`converter timed out after ${config.converterTimeoutMs}ms: ${path.basename(args.sourcePath)}`);
+      killProcessTree(child);
+      killFallback = setTimeout(() => {
+        finish(() => reject(timeoutError));
+      }, 5000);
     }, config.converterTimeoutMs);
     child.on("close", (code) => {
+      if (timeoutError) {
+        finish(() => reject(timeoutError));
+        return;
+      }
       if (code !== 0) {
         finish(() => reject(new Error(stderr.trim() || `converter exited with code ${code}`)));
         return;
@@ -420,6 +438,24 @@ function runConverter(args: {
       }
     });
   });
+}
+
+function killProcessTree(child: ChildProcess): void {
+  if (!child.pid) {
+    child.kill();
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    killer.on("error", () => child.kill());
+    return;
+  }
+
+  child.kill("SIGKILL");
 }
 
 function reportProgress(report: SyncProgressReporter | undefined, patch: Partial<SyncProgress>): void {
