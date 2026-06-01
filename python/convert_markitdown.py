@@ -40,6 +40,8 @@ IMAGE_EXTENSIONS = {
 }
 
 ARCHIVE_EXTENSIONS = {".7z", ".gz", ".rar", ".tar", ".zip"}
+ARCHIVE_TEXT_MAX_FILES_DEFAULT = 40
+ARCHIVE_TEXT_MAX_BYTES_DEFAULT = 200_000
 AUDIO_VIDEO_EXTENSIONS = {
     ".aac",
     ".aiff",
@@ -111,11 +113,15 @@ def under_limit(source: Path, env_name: str, default: int) -> bool:
 
 def archive_section(source: Path) -> tuple[str, str | None]:
     if source.suffix.lower() != ".zip":
-        return "", None
+        return "", "Archive listing is only supported for ZIP files."
     max_entries = int_env("SEARCHX_ARCHIVE_LIST_MAX_ENTRIES", 200)
+    max_text_files = int_env("SEARCHX_ARCHIVE_TEXT_MAX_FILES", ARCHIVE_TEXT_MAX_FILES_DEFAULT)
+    max_text_bytes = int_env("SEARCHX_ARCHIVE_TEXT_MAX_BYTES", ARCHIVE_TEXT_MAX_BYTES_DEFAULT)
     try:
         with zipfile.ZipFile(source) as archive:
-            names = archive.namelist()
+            infos = [info for info in archive.infolist() if not info.is_dir()]
+            names = [info.filename for info in infos]
+            text_sections = archive_text_sections(archive, infos, max_text_files, max_text_bytes)
     except Exception as exc:
         return "", f"Archive listing failed: {exc}"
 
@@ -124,14 +130,57 @@ def archive_section(source: Path) -> tuple[str, str | None]:
     lines = ["## Archive contents", "", *[f"- {name}" for name in shown]]
     if more > 0:
         lines.append(f"- ... {more} more entries omitted")
+    if text_sections:
+        lines.extend(["", "## Archive text excerpts", "", *text_sections])
     return "\n".join(lines), None
+
+
+def archive_text_sections(
+    archive: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+    max_files: int,
+    max_bytes: int,
+) -> list[str]:
+    if max_files <= 0 or max_bytes <= 0:
+        return []
+
+    sections: list[str] = []
+    files_read = 0
+    bytes_read = 0
+    for info in infos:
+        if files_read >= max_files or bytes_read >= max_bytes:
+            break
+        suffix = Path(info.filename).suffix.lower()
+        if suffix not in TEXT_EXTENSIONS:
+            continue
+        if info.file_size <= 0:
+            continue
+        remaining = max_bytes - bytes_read
+        read_size = min(info.file_size, remaining)
+        try:
+            with archive.open(info) as member:
+                raw = member.read(read_size + 1)
+        except Exception as exc:
+            sections.append(f"### {info.filename}\n\nCould not read archive member: {exc}")
+            files_read += 1
+            continue
+        truncated = len(raw) > read_size or info.file_size > read_size
+        text = raw[:read_size].decode("utf-8", errors="replace").strip()
+        if not text:
+            continue
+        if truncated:
+            text = f"{text}\n\n... truncated ..."
+        sections.append(f"### {info.filename}\n\n```text\n{text}\n```")
+        files_read += 1
+        bytes_read += read_size
+    return sections
 
 
 def should_run_markitdown(source: Path) -> bool:
     suffix = source.suffix.lower()
     if suffix in AUDIO_VIDEO_EXTENSIONS and disabled("SEARCHX_MARKITDOWN_MEDIA"):
         return False
-    if suffix in ARCHIVE_EXTENSIONS and disabled("SEARCHX_MARKITDOWN_ARCHIVES"):
+    if suffix in ARCHIVE_EXTENSIONS:
         return False
     return under_limit(source, "SEARCHX_MARKITDOWN_MAX_BYTES", 80 * 1024 * 1024)
 
@@ -181,6 +230,13 @@ def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
     sections: list[str] = []
     errors: list[str] = []
     markitdown_attempted = False
+
+    if source.suffix.lower() in ARCHIVE_EXTENSIONS and not disabled("SEARCHX_MARKITDOWN_ARCHIVES"):
+        archive_text, archive_error = archive_section(source)
+        if archive_text:
+            sections.append(archive_text)
+        if archive_error:
+            errors.append(archive_error)
 
     if should_run_markitdown(source):
         markitdown_attempted = True
