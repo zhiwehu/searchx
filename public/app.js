@@ -119,11 +119,11 @@ async function search() {
   const isDeep = mode === "deep";
   await withBusy(isDeep ? "深度查询中" : "搜索中", async () => {
     if (isDeep) {
-      setSummary("深度自然语言会调用本地 QMD 模型，若超时会自动降级为快速混合检索。");
+      setSummary("自然语言会先做深度检索，调用本地 QMD 模型做查询扩展和重排序；若超时会自动降级为快速混合检索。");
     }
     const data = await api("/api/search", {
       method: "POST",
-      timeoutMs: isDeep ? 45000 : 20000,
+      timeoutMs: isDeep ? 75000 : 20000,
       body: {
         query,
         mode,
@@ -241,8 +241,8 @@ function modeLabel(mode) {
     {
       lex: "关键词检索",
       vector: "语义向量检索",
-      hybrid: "自然语言检索",
-      deep: "深度自然语言检索"
+      hybrid: "快速混合检索",
+      deep: "自然语言检索"
     }[mode] || mode
   );
 }
@@ -333,7 +333,7 @@ async function api(path, options = {}) {
     return data;
   } catch (error) {
     if (error.name === "AbortError") {
-      throw new Error("请求超时。深度自然语言在本机模型上可能很慢，请先使用快速自然语言，或稍后重试。");
+      throw new Error("请求超时。自然语言检索会调用本地模型，首次加载可能较慢；请稍后重试或改用关键词。");
     }
     throw error;
   } finally {

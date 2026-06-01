@@ -27,10 +27,10 @@ python -m venv .venv
 On Windows, use `.venv\Scripts\python.exe -m pip install -r requirements.txt`
 and set `SEARCHX_PYTHON=.venv\Scripts\python.exe` when running the API.
 
-QMD downloads local GGUF models on first vector or hybrid use. SearchX builds a
-vector index during sync by default so the demo's natural-language search works
-after ingestion. For Chinese or mixed-language corpora, set `QMD_EMBED_MODEL` to
-a multilingual embedding model before embedding.
+QMD downloads local GGUF models on first vector or deep search use. SearchX
+builds a vector index during sync by default so the demo's natural-language
+search works after ingestion. For Chinese or mixed-language corpora, set
+`QMD_EMBED_MODEL` to a multilingual embedding model before embedding.
 
 ## Run
 
@@ -52,7 +52,7 @@ npm run build
 npm run cli -- status
 npm run cli -- root add "/path/to/data" --no-recursive
 npm run cli -- sync
-npm run cli -- search "payment terms" --mode hybrid --limit 10
+npm run cli -- search "payment terms" --mode deep --limit 10
 ```
 
 ## Workflow
@@ -95,10 +95,12 @@ QMD runs local GGUF embedding/reranking/query-expansion models through
 - `deep`: QMD `search()` with local query expansion and rerank, best quality but
   slowest.
 
-Deep search runs in a separate worker process with a default timeout of 30s
-(`SEARCHX_DEEP_SEARCH_TIMEOUT_MS`). If the local model path is too slow, SearchX
-kills the worker and falls back to fast hybrid search so the API and web app do
-not stay stuck in "searching" forever.
+The demo web app maps its `Natural language` option to deep search. Deep search
+runs in a separate worker process with a default timeout of 30s
+(`SEARCHX_DEEP_SEARCH_TIMEOUT_MS`) and reranks at most 16 candidates by default
+(`SEARCHX_DEEP_SEARCH_CANDIDATE_LIMIT`). If the local model path is too slow,
+SearchX kills the worker and falls back to fast hybrid search so the API and web
+app do not stay stuck in "searching" forever.
 
 Set `SEARCHX_QMD_EMBED_ON_INGEST=0`, or pass `"embed": false` / `--no-embed`,
 to refresh only the text index and skip vector indexing.
