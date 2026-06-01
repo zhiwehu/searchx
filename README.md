@@ -93,6 +93,11 @@ QMD runs local GGUF embedding/reranking/query-expansion models through
 - `deep`: QMD `search()` with local query expansion and rerank, best quality but
   slowest.
 
+Deep search runs in a separate worker process with a default timeout of 30s
+(`SEARCHX_DEEP_SEARCH_TIMEOUT_MS`). If the local model path is too slow, SearchX
+kills the worker and falls back to fast hybrid search so the API and web app do
+not stay stuck in "searching" forever.
+
 SearchX is MarkItDown-first: it does not directly call VLM, OCR, or ASR
 services. Content extraction goes through MarkItDown, and optional models should
 be exposed as MarkItDown LLM/VLM providers or plugins.

@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fork } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { catalog } from "./catalog.js";
+import { killProcessTree } from "./processUtils.js";
 import type { IngestedAsset, SearchMode, SearchRequest, SearchResponse, SearchResultItem } from "./types.js";
 
 type QmdStore = {
@@ -14,6 +17,19 @@ type QmdStore = {
   listCollections?: () => Promise<unknown>;
   close?: () => Promise<void>;
 };
+
+type DeepSearchOptions = {
+  query: string;
+  limit: number;
+  candidateLimit: number;
+  minScore?: number;
+  collection: string;
+  chunkStrategy: string;
+};
+
+type DeepSearchWorkerMessage =
+  | { type: "result"; results: unknown[] }
+  | { type: "error"; error: string };
 
 let storePromise: Promise<QmdStore> | undefined;
 
@@ -84,7 +100,7 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
       results = await searchFastHybrid(store, query, { limit, minScore }, assets);
       warning = warning ?? "快速自然语言模式使用关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
     } else {
-      const rawResults = await store.search({
+      const rawResults = await searchDeep(store, {
         query,
         limit,
         candidateLimit: deepCandidateLimit(limit),
@@ -324,8 +340,64 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
+async function searchDeep(store: QmdStore, options: DeepSearchOptions): Promise<unknown[]> {
+  const workerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "deepSearchWorker.js");
+  const hasWorker = await fs.access(workerPath).then(() => true).catch(() => false);
+  if (!hasWorker) return store.search(options);
+  return runDeepSearchWorker(workerPath, options);
+}
+
+function runDeepSearchWorker(workerPath: string, options: DeepSearchOptions): Promise<unknown[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stderr = "";
+    const encoded = Buffer.from(JSON.stringify(options), "utf8").toString("base64url");
+    const child = fork(workerPath, [encoded], {
+      cwd: config.cwd,
+      env: process.env,
+      execArgv: [],
+      stdio: ["ignore", "ignore", "pipe", "ipc"]
+    });
+    const timeoutMs = deepSearchTimeoutMs();
+    const timeout = setTimeout(() => {
+      killProcessTree(child);
+      finish(() => reject(new Error(`deep search timed out after ${timeoutMs}ms`)));
+    }, timeoutMs);
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    child.on("message", (message) => {
+      const parsed = message as DeepSearchWorkerMessage;
+      if (parsed.type === "result") {
+        finish(() => resolve(parsed.results));
+      } else if (parsed.type === "error") {
+        finish(() => reject(new Error(parsed.error)));
+      }
+    });
+    child.on("error", (error) => finish(() => reject(error)));
+    child.on("exit", (code, signal) => {
+      if (settled) return;
+      finish(() => reject(new Error(stderr.trim() || `deep search worker exited with code ${code ?? "null"} signal ${signal ?? "null"}`)));
+    });
+  });
+}
+
 function deepCandidateLimit(limit: number): number {
-  return Math.min(Math.max(limit * 2, 8), 16);
+  const maxCandidates = Number.isFinite(config.deepSearchCandidateLimit) ? Math.max(1, config.deepSearchCandidateLimit) : 16;
+  return Math.max(1, Math.min(Math.max(limit * 2, 8), maxCandidates));
+}
+
+function deepSearchTimeoutMs(): number {
+  return Number.isFinite(config.deepSearchTimeoutMs) && config.deepSearchTimeoutMs > 0 ? config.deepSearchTimeoutMs : 30000;
 }
 
 function errorMessage(error: unknown): string {
