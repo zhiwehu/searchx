@@ -153,12 +153,18 @@ async function search() {
     return;
   }
 
-  await withBusy("搜索中", async () => {
+  const mode = els.modeSelect.value;
+  const isDeep = mode === "deep";
+  await withBusy(isDeep ? "深度查询中" : "搜索中", async () => {
+    if (isDeep) {
+      setSummary("深度自然语言会调用本地 QMD 模型，若超时会自动降级为快速混合检索。");
+    }
     const data = await api("/api/search", {
       method: "POST",
+      timeoutMs: isDeep ? 45000 : 20000,
       body: {
         query,
-        mode: els.modeSelect.value,
+        mode,
         limit: 12
       }
     });
@@ -425,14 +431,26 @@ function setSummary(text) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    method: options.method ?? "GET",
-    headers: options.body ? { "content-type": "application/json" } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
+  const controller = options.timeoutMs ? new AbortController() : undefined;
+  const timeout = controller ? setTimeout(() => controller.abort(), options.timeoutMs) : undefined;
+  try {
+    const response = await fetch(path, {
+      method: options.method ?? "GET",
+      headers: options.body ? { "content-type": "application/json" } : undefined,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller?.signal
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("请求超时。深度自然语言在本机模型上可能很慢，请先使用快速自然语言，或稍后重试。");
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function escapeHtml(value) {

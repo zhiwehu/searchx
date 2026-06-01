@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { config } from "./config.js";
 import { catalog } from "./catalog.js";
 import { assetIdForPath, rootIdForPath } from "./ids.js";
 import { detectKind, getSourceExt, guessMimeType, shouldTryConvert } from "./fileKinds.js";
+import { killProcessTree } from "./processUtils.js";
 import type {
   ConversionStatus,
   IngestRequest,
@@ -439,24 +440,6 @@ function runConverter(args: {
       }
     });
   });
-}
-
-function killProcessTree(child: ChildProcess): void {
-  if (!child.pid) {
-    child.kill();
-    return;
-  }
-
-  if (process.platform === "win32") {
-    const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
-      windowsHide: true
-    });
-    killer.on("error", () => child.kill());
-    return;
-  }
-
-  child.kill("SIGKILL");
 }
 
 function reportProgress(report: SyncProgressReporter | undefined, patch: Partial<SyncProgress>): void {
