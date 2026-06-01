@@ -87,6 +87,7 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
       const rawResults = await store.search({
         query,
         limit,
+        candidateLimit: deepCandidateLimit(limit),
         minScore,
         collection: config.qmdCollection,
         chunkStrategy: config.qmdChunkStrategy
@@ -321,6 +322,10 @@ function compactSnippet(value: string | undefined): string | undefined {
 function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function deepCandidateLimit(limit: number): number {
+  return Math.min(Math.max(limit * 2, 8), 16);
 }
 
 function errorMessage(error: unknown): string {
