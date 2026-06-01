@@ -139,7 +139,7 @@ def should_run_markitdown(source: Path) -> bool:
 def build_markitdown(allow_llm: bool = False) -> Any:
     from markitdown import MarkItDown
 
-    enable_plugins = os.environ.get("SEARCHX_MARKITDOWN_PLUGINS") == "1"
+    enable_plugins = not disabled("SEARCHX_MARKITDOWN_PLUGINS")
     enable_llm = allow_llm
     llm_model = os.environ.get("SEARCHX_LLM_MODEL")
     llm_prompt = os.environ.get("SEARCHX_LLM_PROMPT")
@@ -147,7 +147,16 @@ def build_markitdown(allow_llm: bool = False) -> Any:
     if enable_llm and llm_model:
         from openai import OpenAI
 
-        client = OpenAI()
+        client_kwargs: dict[str, str] = {}
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if base_url:
+            client_kwargs["base_url"] = base_url
+            client_kwargs["api_key"] = api_key or "local"
+        elif api_key:
+            client_kwargs["api_key"] = api_key
+
+        client = OpenAI(**client_kwargs)
         kwargs = {
             "enable_plugins": enable_plugins,
             "llm_client": client,
@@ -160,6 +169,14 @@ def build_markitdown(allow_llm: bool = False) -> Any:
     return MarkItDown(enable_plugins=enable_plugins)
 
 
+def should_use_llm_provider() -> bool:
+    if disabled("SEARCHX_MARKITDOWN_USE_LLM"):
+        return False
+    if enabled("SEARCHX_MARKITDOWN_USE_LLM"):
+        return True
+    return bool(os.environ.get("OPENAI_BASE_URL") and os.environ.get("SEARCHX_LLM_MODEL"))
+
+
 def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
     sections: list[str] = []
     errors: list[str] = []
@@ -168,7 +185,7 @@ def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
     if should_run_markitdown(source):
         markitdown_attempted = True
         try:
-            md = build_markitdown(allow_llm=enabled("SEARCHX_MARKITDOWN_USE_LLM"))
+            md = build_markitdown(allow_llm=should_use_llm_provider())
             result = md.convert(str(source))
             markitdown_text = (getattr(result, "text_content", "") or "").strip()
             if markitdown_text:

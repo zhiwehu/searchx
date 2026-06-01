@@ -45,15 +45,10 @@
         <section class="panel compact">
           <h2>同步</h2>
           <label class="checkline">
-            <input id="embedInput" type="checkbox" />
-            <span>同步后生成向量索引</span>
-          </label>
-          <label class="checkline">
             <input id="forceConvertInput" type="checkbox" />
             <span>重新生成 Markdown</span>
           </label>
           <button id="syncButton" type="button">同步全部目录</button>
-          <button class="ghost" id="indexButton" type="button">仅刷新文本索引</button>
           <div class="progress-wrap" id="progressWrap" hidden>
             <div class="progress-row">
               <span id="progressLabel">准备中</span>
@@ -64,92 +59,6 @@
           </div>
           <p class="hint" id="storageHint"></p>
         </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <h2>模型配置</h2>
-            <button class="ghost" id="refreshSettingsButton" type="button">读取</button>
-          </div>
-
-          <form id="settingsForm" class="settings-form">
-            <h3>MarkItDown</h3>
-            <label>
-              <span>Python 路径</span>
-              <input id="pythonBinInput" autocomplete="off" />
-            </label>
-            <label class="checkline">
-              <input id="markitdownPluginsInput" type="checkbox" />
-              <span>启用 MarkItDown 插件</span>
-            </label>
-            <label class="checkline">
-              <input id="markitdownArchivesInput" type="checkbox" />
-              <span>处理压缩包内容</span>
-            </label>
-            <label class="checkline">
-              <input id="markitdownMediaInput" type="checkbox" />
-              <span>尝试处理音频 / 视频</span>
-            </label>
-            <label class="checkline">
-              <input id="markitdownUseLlmInput" type="checkbox" />
-              <span>允许 MarkItDown 调用 LLM / VLM provider</span>
-            </label>
-            <label>
-              <span>OpenAI-compatible Base URL</span>
-              <input id="openaiBaseUrlInput" placeholder="例如 http://127.0.0.1:11434/v1" autocomplete="off" />
-            </label>
-            <label>
-              <span>API Key</span>
-              <input id="openaiApiKeyInput" type="password" placeholder="本地服务可填 local" autocomplete="off" />
-            </label>
-            <label>
-              <span>MarkItDown LLM / VLM 模型</span>
-              <input id="llmModelInput" placeholder="例如 openbmb/MiniCPM-V-4.6 或 gpt-4o-mini" autocomplete="off" />
-            </label>
-            <label>
-              <span>MarkItDown LLM 提示词</span>
-              <textarea id="llmPromptInput" rows="3" placeholder="空则使用 MarkItDown 默认提示词"></textarea>
-            </label>
-
-            <h3>QMD</h3>
-            <label class="checkline">
-              <input id="qmdEmbedDefaultInput" type="checkbox" />
-              <span>同步默认生成向量索引</span>
-            </label>
-            <label>
-              <span>Embedding 模型</span>
-              <input id="qmdEmbedModelInput" placeholder="hf:...gguf，空则用 QMD 默认" autocomplete="off" />
-            </label>
-            <label>
-              <span>Rerank 模型</span>
-              <input id="qmdRerankModelInput" placeholder="hf:...gguf，空则用 QMD 默认" autocomplete="off" />
-            </label>
-            <label>
-              <span>Query Expansion 模型</span>
-              <input id="qmdGenerateModelInput" placeholder="hf:...gguf，空则用 QMD 默认" autocomplete="off" />
-            </label>
-            <label>
-              <span>Chunk 策略</span>
-              <input id="qmdChunkStrategyInput" placeholder="auto" autocomplete="off" />
-            </label>
-            <label>
-              <span>GPU 后端</span>
-              <select id="qmdGpuInput">
-                <option value="auto">auto</option>
-                <option value="vulkan">vulkan</option>
-                <option value="cuda">cuda</option>
-                <option value="metal">metal</option>
-                <option value="false">关闭 GPU</option>
-              </select>
-            </label>
-            <label class="checkline">
-              <input id="qmdForceCpuInput" type="checkbox" />
-              <span>强制 CPU</span>
-            </label>
-            <button type="submit">保存配置</button>
-          </form>
-
-          <div class="model-notes" id="modelNotes"></div>
-        </section>
       </aside>
 
       <section class="workspace">
@@ -157,9 +66,7 @@
           <input id="queryInput" placeholder="搜索图片、音频、视频、PDF、Office、文本内容..." autocomplete="off" />
           <select id="modeSelect" aria-label="检索模式">
             <option value="lex">关键词</option>
-            <option value="vector">语义向量</option>
-            <option value="hybrid" selected>快速自然语言</option>
-            <option value="deep">深度自然语言</option>
+            <option value="hybrid" selected>自然语言</option>
           </select>
           <button type="submit">搜索</button>
         </form>

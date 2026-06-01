@@ -27,6 +27,11 @@ type DeepSearchOptions = {
   chunkStrategy: string;
 };
 
+type DeepSearchWorkerEntrypoint = {
+  path: string;
+  execArgv: string[];
+};
+
 type DeepSearchWorkerMessage =
   | { type: "result"; results: unknown[] }
   | { type: "error"; error: string };
@@ -81,10 +86,10 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
 
   if ((mode === "hybrid" || mode === "vector" || mode === "deep") && !status.hasVectorIndex) {
     if (mode === "vector" || mode === "deep") {
-      throw Object.assign(new Error("还没有向量索引。请先在同步时勾选“同步后生成向量索引”。"), { statusCode: 400 });
+      throw Object.assign(new Error("还没有向量索引。请先重新同步，或调用 /api/index 生成向量索引。"), { statusCode: 400 });
     }
     mode = "lex";
-    warning = "还没有生成 QMD 向量索引，本次已自动降级为关键词检索。勾选“同步后生成向量索引”后再用自然语言模式会更准。";
+    warning = "还没有生成 QMD 向量索引，本次已自动降级为关键词检索。重新同步或调用 /api/index 生成向量索引后，自然语言模式会更准。";
   }
 
   const assets = await catalog.list();
@@ -341,21 +346,35 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 }
 
 async function searchDeep(store: QmdStore, options: DeepSearchOptions): Promise<unknown[]> {
-  const workerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "deepSearchWorker.js");
-  const hasWorker = await fs.access(workerPath).then(() => true).catch(() => false);
-  if (!hasWorker) return store.search(options);
-  return runDeepSearchWorker(workerPath, options);
+  const worker = await resolveDeepSearchWorker();
+  if (!worker) return store.search(options);
+  return runDeepSearchWorker(worker, options);
 }
 
-function runDeepSearchWorker(workerPath: string, options: DeepSearchOptions): Promise<unknown[]> {
+async function resolveDeepSearchWorker(): Promise<DeepSearchWorkerEntrypoint | undefined> {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const jsWorkerPath = path.join(dir, "deepSearchWorker.js");
+  if (await pathExists(jsWorkerPath)) {
+    return { path: jsWorkerPath, execArgv: [] };
+  }
+
+  const tsWorkerPath = path.join(dir, "deepSearchWorker.ts");
+  if (await pathExists(tsWorkerPath)) {
+    return { path: tsWorkerPath, execArgv: process.execArgv };
+  }
+
+  return undefined;
+}
+
+function runDeepSearchWorker(worker: DeepSearchWorkerEntrypoint, options: DeepSearchOptions): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let stderr = "";
     const encoded = Buffer.from(JSON.stringify(options), "utf8").toString("base64url");
-    const child = fork(workerPath, [encoded], {
+    const child = fork(worker.path, [encoded], {
       cwd: config.cwd,
       env: process.env,
-      execArgv: [],
+      execArgv: worker.execArgv,
       stdio: ["ignore", "ignore", "pipe", "ipc"]
     });
     const timeoutMs = deepSearchTimeoutMs();
@@ -389,6 +408,10 @@ function runDeepSearchWorker(workerPath: string, options: DeepSearchOptions): Pr
       finish(() => reject(new Error(stderr.trim() || `deep search worker exited with code ${code ?? "null"} signal ${signal ?? "null"}`)));
     });
   });
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  return fs.access(filePath).then(() => true).catch(() => false);
 }
 
 function deepCandidateLimit(limit: number): number {

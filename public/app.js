@@ -15,34 +15,13 @@ const els = {
   recursiveInput: $("recursiveInput"),
   refreshRootsButton: $("refreshRootsButton"),
   rootList: $("rootList"),
-  embedInput: $("embedInput"),
   forceConvertInput: $("forceConvertInput"),
   syncButton: $("syncButton"),
-  indexButton: $("indexButton"),
   progressWrap: $("progressWrap"),
   progressLabel: $("progressLabel"),
   progressPercent: $("progressPercent"),
   syncProgress: $("syncProgress"),
   progressStats: $("progressStats"),
-  refreshSettingsButton: $("refreshSettingsButton"),
-  settingsForm: $("settingsForm"),
-  pythonBinInput: $("pythonBinInput"),
-  markitdownPluginsInput: $("markitdownPluginsInput"),
-  markitdownArchivesInput: $("markitdownArchivesInput"),
-  markitdownMediaInput: $("markitdownMediaInput"),
-  markitdownUseLlmInput: $("markitdownUseLlmInput"),
-  openaiBaseUrlInput: $("openaiBaseUrlInput"),
-  openaiApiKeyInput: $("openaiApiKeyInput"),
-  llmModelInput: $("llmModelInput"),
-  llmPromptInput: $("llmPromptInput"),
-  qmdEmbedDefaultInput: $("qmdEmbedDefaultInput"),
-  qmdEmbedModelInput: $("qmdEmbedModelInput"),
-  qmdRerankModelInput: $("qmdRerankModelInput"),
-  qmdGenerateModelInput: $("qmdGenerateModelInput"),
-  qmdChunkStrategyInput: $("qmdChunkStrategyInput"),
-  qmdGpuInput: $("qmdGpuInput"),
-  qmdForceCpuInput: $("qmdForceCpuInput"),
-  modelNotes: $("modelNotes"),
   searchForm: $("searchForm"),
   queryInput: $("queryInput"),
   modeSelect: $("modeSelect"),
@@ -68,12 +47,6 @@ function bindEvents() {
 
   els.refreshRootsButton.addEventListener("click", refreshAll);
   els.syncButton.addEventListener("click", syncAll);
-  els.indexButton.addEventListener("click", refreshIndex);
-  els.refreshSettingsButton.addEventListener("click", loadSettings);
-  els.settingsForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await saveSettings();
-  });
 
   els.searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -84,7 +57,6 @@ function bindEvents() {
 async function refreshAll() {
   await withBusy("读取状态", async () => {
     await loadAll();
-    await loadSettings();
   });
 }
 
@@ -128,21 +100,11 @@ async function removeRoot(rootId) {
 
 async function syncAll() {
   await withBusy("同步中", async () => {
-    const result = await runSyncJob({ embed: els.embedInput.checked, force: els.forceConvertInput.checked });
+    const result = await runSyncJob({ force: els.forceConvertInput.checked });
     await loadAll();
     setSummary(
       `同步完成：扫描 ${result.scanned}，转换 ${result.converted.length}，未变化 ${result.unchanged.length}，移除 ${result.removed.length}。`
     );
-  });
-}
-
-async function refreshIndex() {
-  await withBusy("刷新索引", async () => {
-    await api("/api/index", {
-      method: "POST",
-      body: { embed: false }
-    });
-    setSummary("文本索引已刷新。");
   });
 }
 
@@ -204,7 +166,7 @@ function renderRoots() {
 
 async function syncRoot(rootId) {
   await withBusy("同步目录", async () => {
-    const result = await runSyncJob({ rootIds: [rootId], embed: els.embedInput.checked, force: els.forceConvertInput.checked });
+    const result = await runSyncJob({ rootIds: [rootId], force: els.forceConvertInput.checked });
     await loadAll();
     setSummary(`目录同步完成：扫描 ${result.scanned}，转换 ${result.converted.length}，未变化 ${result.unchanged.length}。`);
   });
@@ -279,84 +241,10 @@ function modeLabel(mode) {
     {
       lex: "关键词检索",
       vector: "语义向量检索",
-      hybrid: "快速自然语言检索",
+      hybrid: "自然语言检索",
       deep: "深度自然语言检索"
     }[mode] || mode
   );
-}
-
-async function loadSettings() {
-  const data = await api("/api/settings");
-  renderSettings(data.settings);
-  renderModelNotes(data.modelNotes ?? []);
-}
-
-async function saveSettings() {
-  await withBusy("保存配置", async () => {
-    const body = {
-      pythonBin: els.pythonBinInput.value.trim(),
-      markitdownPlugins: els.markitdownPluginsInput.checked,
-      markitdownArchives: els.markitdownArchivesInput.checked,
-      markitdownMedia: els.markitdownMediaInput.checked,
-      markitdownUseLlm: els.markitdownUseLlmInput.checked,
-      openaiBaseUrl: els.openaiBaseUrlInput.value.trim(),
-      llmModel: els.llmModelInput.value.trim(),
-      llmPrompt: els.llmPromptInput.value.trim(),
-      qmdEmbedOnIngest: els.qmdEmbedDefaultInput.checked,
-      qmdEmbedModel: els.qmdEmbedModelInput.value.trim(),
-      qmdRerankModel: els.qmdRerankModelInput.value.trim(),
-      qmdGenerateModel: els.qmdGenerateModelInput.value.trim(),
-      qmdChunkStrategy: els.qmdChunkStrategyInput.value.trim() || "auto",
-      qmdLlamaGpu: els.qmdGpuInput.value,
-      qmdForceCpu: els.qmdForceCpuInput.checked
-    };
-    const openaiApiKey = els.openaiApiKeyInput.value.trim();
-    if (openaiApiKey) body.openaiApiKey = openaiApiKey;
-
-    const data = await api("/api/settings", {
-      method: "PUT",
-      body
-    });
-    renderSettings(data.settings);
-    renderModelNotes(data.modelNotes ?? []);
-    els.embedInput.checked = data.settings.qmdEmbedOnIngest;
-    setSummary("配置已保存。模型相关改动会影响后续同步和检索；已有向量索引需要重新生成。");
-  });
-}
-
-function renderSettings(settings) {
-  els.pythonBinInput.value = settings.pythonBin ?? "";
-  els.markitdownPluginsInput.checked = Boolean(settings.markitdownPlugins);
-  els.markitdownArchivesInput.checked = settings.markitdownArchives !== false;
-  els.markitdownMediaInput.checked = settings.markitdownMedia !== false;
-  els.markitdownUseLlmInput.checked = Boolean(settings.markitdownUseLlm);
-  els.openaiBaseUrlInput.value = settings.openaiBaseUrl ?? "";
-  els.openaiApiKeyInput.value = "";
-  els.openaiApiKeyInput.placeholder = settings.openaiApiKeySet ? "已配置，留空保持不变" : "本地服务可填 local";
-  els.llmModelInput.value = settings.llmModel ?? "";
-  els.llmPromptInput.value = settings.llmPrompt ?? "";
-  els.qmdEmbedDefaultInput.checked = Boolean(settings.qmdEmbedOnIngest);
-  els.embedInput.checked = Boolean(settings.qmdEmbedOnIngest);
-  els.qmdEmbedModelInput.value = settings.qmdEmbedModel ?? "";
-  els.qmdRerankModelInput.value = settings.qmdRerankModel ?? "";
-  els.qmdGenerateModelInput.value = settings.qmdGenerateModel ?? "";
-  els.qmdChunkStrategyInput.value = settings.qmdChunkStrategy ?? "auto";
-  els.qmdGpuInput.value = settings.qmdLlamaGpu || "auto";
-  els.qmdForceCpuInput.checked = Boolean(settings.qmdForceCpu);
-}
-
-function renderModelNotes(notes) {
-  els.modelNotes.innerHTML = notes
-    .map(
-      (note) => `
-        <div class="model-note">
-          <strong>${escapeHtml(note.area)}</strong><br />
-          ${escapeHtml(note.modelNeed)}<br />
-          ${escapeHtml(note.currentBehavior)}
-        </div>
-      `
-    )
-    .join("");
 }
 
 function renderResults(results) {

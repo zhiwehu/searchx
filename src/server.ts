@@ -192,12 +192,12 @@ function getModelNotes(): Array<{ area: string; modelNeed: string; currentBehavi
     {
       area: "图片、扫描件和多模态内容",
       modelNeed: "MarkItDown 支持的 LLM/VLM provider 或插件",
-      currentBehavior: "SearchX 不直接调用视觉/OCR 服务；开启 MarkItDown LLM/provider 或插件后，由 MarkItDown 决定如何处理图片、扫描件和内嵌媒体。"
+      currentBehavior: "SearchX 默认启用 MarkItDown 插件，并在配置了 OPENAI_BASE_URL 与 SEARCHX_LLM_MODEL 时自动让 MarkItDown 调用 VLM/provider。"
     },
     {
       area: "OCR / ASR 扩展",
       modelNeed: "MarkItDown 插件或自定义 MarkItDown adapter",
-      currentBehavior: "本地 OCR、ASR 和其他模型应作为 MarkItDown 插件/provider 接入，SearchX 只消费 MarkItDown 输出的 Markdown。"
+      currentBehavior: "本地 OCR、ASR 和其他模型作为 MarkItDown 插件/provider 接入；SearchX 只消费 MarkItDown 输出的 Markdown 并记录失败原因。"
     },
     {
       area: "批量处理",
