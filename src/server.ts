@@ -212,7 +212,7 @@ function getModelNotes(): Array<{ area: string; modelNeed: string; currentBehavi
     {
       area: "QMD 自然语言检索",
       modelNeed: "本地 embedding、query expansion、rerank GGUF 模型",
-      currentBehavior: "生成向量索引后，QMD 使用本地模型做语义检索、查询扩展和重排序。"
+      currentBehavior: "快速自然语言只做关键词 + 向量融合；深度自然语言会调用 QMD search()，使用本地模型做查询扩展和重排序。"
     }
   ];
 }

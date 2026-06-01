@@ -170,7 +170,7 @@ Commands:
   searchx ingest <path> [--embed] [--force]
   searchx sync [--embed] [--force]
   searchx index [--embed] [--force]
-  searchx search <query> [--mode lex|vector|hybrid] [--limit 10]
+  searchx search <query> [--mode lex|vector|hybrid|deep] [--limit 10]
 `);
 }
 
