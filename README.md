@@ -2,7 +2,8 @@
 
 SearchX is a local-first natural language search system for documents and media.
 It converts source files into Markdown with Microsoft MarkItDown, then indexes the
-generated Markdown with QMD for BM25, vector search, and hybrid reranking.
+generated Markdown with QMD for BM25, vector search, fast hybrid search, and
+deep natural-language reranking.
 
 ## Current shape
 
@@ -60,7 +61,8 @@ npm run cli -- search "payment terms" --mode hybrid --limit 10
    Markdown sidecars under `.searchx/markdown/<root-id>/<relative-source-path>.md`.
 4. Removed source files are removed from the catalog and their Markdown sidecars
    are deleted on the next sync.
-5. Search with keywords, semantic vector search, or hybrid natural language search.
+5. Search with keywords, semantic vector search, fast natural-language search,
+   or deep natural-language search.
 
 ## API
 
@@ -76,16 +78,24 @@ npm run cli -- search "payment terms" --mode hybrid --limit 10
 - `POST /api/sync/jobs` with `{ "rootIds": ["..."], "embed": false }`
 - `GET /api/jobs/:id`
 - `POST /api/index` with `{ "embed": true, "force": false }`
-- `POST /api/search` with `{ "query": "...", "mode": "lex|vector|hybrid", "limit": 10 }`
+- `POST /api/search` with `{ "query": "...", "mode": "lex|vector|hybrid|deep", "limit": 10 }`
 - `GET /api/settings`
 - `PUT /api/settings`
 
 ## Local-first model policy
 
 QMD runs local GGUF embedding/reranking/query-expansion models through
-`node-llama-cpp`. SearchX is MarkItDown-first: it does not directly call VLM,
-OCR, or ASR services. Content extraction goes through MarkItDown, and optional
-models should be exposed as MarkItDown LLM/VLM providers or plugins.
+`node-llama-cpp`. SearchX exposes four query modes:
+
+- `lex`: BM25 keyword search, no model.
+- `vector`: semantic vector search with the local embedding model.
+- `hybrid`: fast keyword + vector fusion, without query expansion or rerank.
+- `deep`: QMD `search()` with local query expansion and rerank, best quality but
+  slowest.
+
+SearchX is MarkItDown-first: it does not directly call VLM, OCR, or ASR
+services. Content extraction goes through MarkItDown, and optional models should
+be exposed as MarkItDown LLM/VLM providers or plugins.
 
 MarkItDown runs without cloud calls by default. To let MarkItDown use an
 OpenAI-compatible local or cloud endpoint, set:

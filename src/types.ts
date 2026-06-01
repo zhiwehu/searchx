@@ -142,7 +142,7 @@ export type RuntimeSettings = {
   qmdLlamaGpu: string;
 };
 
-export type SearchMode = "lex" | "vector" | "hybrid";
+export type SearchMode = "lex" | "vector" | "hybrid" | "deep";
 
 export type SearchRequest = {
   query: string;

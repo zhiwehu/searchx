@@ -63,8 +63,8 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
   const store = await getQmdStore();
   const status = await readQmdStatus(store);
 
-  if ((mode === "hybrid" || mode === "vector") && !status.hasVectorIndex) {
-    if (mode === "vector") {
+  if ((mode === "hybrid" || mode === "vector" || mode === "deep") && !status.hasVectorIndex) {
+    if (mode === "vector" || mode === "deep") {
       throw Object.assign(new Error("还没有向量索引。请先在同步时勾选“同步后生成向量索引”。"), { statusCode: 400 });
     }
     mode = "lex";
@@ -80,16 +80,39 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
     } else if (mode === "vector") {
       const rawResults = await store.searchVector(query, { limit, minScore, collection: config.qmdCollection });
       results = rawResults.map((result) => normalizeResult(result, assets));
-    } else {
+    } else if (mode === "hybrid") {
       results = await searchFastHybrid(store, query, { limit, minScore }, assets);
-      warning = warning ?? "自然语言模式使用快速混合检索：关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
+      warning = warning ?? "快速自然语言模式使用关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
+    } else {
+      const rawResults = await store.search({
+        query,
+        limit,
+        minScore,
+        collection: config.qmdCollection,
+        chunkStrategy: config.qmdChunkStrategy
+      });
+      results = rawResults.map((result) => normalizeResult(result, assets));
     }
   } catch (error) {
-    if (mode !== "hybrid") throw error;
-    const rawResults = await store.searchLex(query, { limit, minScore, collection: config.qmdCollection });
-    results = rawResults.map((result) => normalizeResult(result, assets));
-    mode = "lex";
-    warning = `向量检索暂不可用，本次已降级为关键词检索：${error instanceof Error ? error.message : String(error)}`;
+    if (mode === "deep") {
+      try {
+        results = await searchFastHybrid(store, query, { limit, minScore }, assets);
+        mode = "hybrid";
+        warning = `深度自然语言检索暂不可用，本次已降级为快速混合检索：${errorMessage(error)}`;
+      } catch (fallbackError) {
+        const rawResults = await store.searchLex(query, { limit, minScore, collection: config.qmdCollection });
+        results = rawResults.map((result) => normalizeResult(result, assets));
+        mode = "lex";
+        warning = `深度自然语言检索暂不可用，快速混合检索也失败，本次已降级为关键词检索：${errorMessage(fallbackError)}`;
+      }
+    } else if (mode === "hybrid") {
+      const rawResults = await store.searchLex(query, { limit, minScore, collection: config.qmdCollection });
+      results = rawResults.map((result) => normalizeResult(result, assets));
+      mode = "lex";
+      warning = `向量检索暂不可用，本次已降级为关键词检索：${errorMessage(error)}`;
+    } else {
+      throw error;
+    }
   }
 
   return {
@@ -102,8 +125,8 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
 
 export function parseSearchMode(value: unknown): SearchMode {
   if (value === undefined || value === null || value === "") return "hybrid";
-  if (value === "lex" || value === "vector" || value === "hybrid") return value;
-  throw Object.assign(new Error("Invalid search mode. Expected one of: lex, vector, hybrid."), { statusCode: 400 });
+  if (value === "lex" || value === "vector" || value === "hybrid" || value === "deep") return value;
+  throw Object.assign(new Error("Invalid search mode. Expected one of: lex, vector, hybrid, deep."), { statusCode: 400 });
 }
 
 export async function getQmdStatus(): Promise<unknown> {
@@ -298,4 +321,8 @@ function compactSnippet(value: string | undefined): string | undefined {
 function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -273,7 +273,8 @@ function modeLabel(mode) {
     {
       lex: "关键词检索",
       vector: "语义向量检索",
-      hybrid: "自然语言检索"
+      hybrid: "快速自然语言检索",
+      deep: "深度自然语言检索"
     }[mode] || mode
   );
 }

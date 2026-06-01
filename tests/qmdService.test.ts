@@ -8,6 +8,7 @@ test("parseSearchMode accepts supported modes and defaults to hybrid", () => {
   assert.equal(parseSearchMode("lex"), "lex");
   assert.equal(parseSearchMode("vector"), "vector");
   assert.equal(parseSearchMode("hybrid"), "hybrid");
+  assert.equal(parseSearchMode("deep"), "deep");
 });
 
 test("parseSearchMode rejects unsupported modes", () => {
