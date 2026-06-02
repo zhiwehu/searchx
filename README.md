@@ -28,9 +28,9 @@ On Windows, use `.venv\Scripts\python.exe -m pip install -r requirements.txt`
 and set `SEARCHX_PYTHON=.venv\Scripts\python.exe` when running the API.
 
 QMD downloads local GGUF models on first vector or deep search use. SearchX
-builds a vector index during sync by default so the demo's natural-language
-search works after ingestion. For Chinese or mixed-language corpora, set
-`QMD_EMBED_MODEL` to a multilingual embedding model before embedding.
+builds a vector index during sync by default, so the demo's natural-language
+search works after ingestion. See [QMD local models](#qmd-local-models) for the
+default models, cache location, and multilingual overrides.
 
 ## Run
 
@@ -54,6 +54,15 @@ npm run cli -- root add "/path/to/data" --no-recursive
 npm run cli -- sync
 npm run cli -- search "payment terms" --mode deep --limit 10
 ```
+
+Useful CLI notes:
+
+- `sync`, `ingest`, and `index` build QMD vector indexes by default.
+- Use `--no-embed` to refresh Markdown and BM25 text search without generating
+  vectors.
+- Use `--force` with `sync` or `index` to rebuild embeddings after changing the
+  embedding model.
+- `npm run cli -- serve` starts the API server after `npm run build`.
 
 ## Workflow
 
@@ -84,10 +93,40 @@ npm run cli -- search "payment terms" --mode deep --limit 10
 - `GET /api/settings`
 - `PUT /api/settings`
 
+`/api/ingest`, `/api/sync`, and `/api/sync/jobs` default to `"embed": true`
+unless `SEARCHX_QMD_EMBED_ON_INGEST=0` is set. Pass `"embed": false` when you
+only want Markdown conversion and keyword search.
+
+Example API flow:
+
+```bash
+curl -s -X POST http://127.0.0.1:7310/api/roots \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/path/to/data","recursive":true}'
+
+curl -s -X POST http://127.0.0.1:7310/api/sync/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"embed":true}'
+
+curl -s http://127.0.0.1:7310/api/jobs/<job-id>
+
+curl -s -X POST http://127.0.0.1:7310/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"上周关于产品的PPT文件","mode":"deep","limit":10}'
+```
+
+`GET /api/assets/:id/raw` is disabled by default because it streams original
+local files. Set `SEARCHX_ALLOW_RAW_FILE_ACCESS=1` to enable it for trusted
+clients.
+
 ## Local-first model policy
 
-QMD runs local GGUF embedding/reranking/query-expansion models through
-`node-llama-cpp`. SearchX exposes four query modes:
+SearchX has two independent model paths:
+
+- MarkItDown LLM/VLM providers extract multimodal content into Markdown.
+- QMD local GGUF models index and search the generated Markdown.
+
+SearchX exposes four query modes:
 
 - `lex`: BM25 keyword search, no model.
 - `vector`: semantic vector search with the local embedding model.
@@ -111,6 +150,50 @@ app do not stay stuck in "searching" forever.
 
 Set `SEARCHX_QMD_EMBED_ON_INGEST=0`, or pass `"embed": false` / `--no-embed`,
 to refresh only the text index and skip vector indexing.
+
+### QMD local models
+
+QMD runs local GGUF embedding, reranking, and query-expansion models through
+`node-llama-cpp`; these are not OpenAI-compatible HTTP providers. SearchX sets
+`XDG_CACHE_HOME` to `.searchx/cache` by default, so QMD models are cached under
+`.searchx/cache/qmd/models` unless you override `XDG_CACHE_HOME`.
+
+QMD auto-downloads its default Hugging Face GGUF models on first use:
+
+| Model | Purpose | Approx. size |
+| --- | --- | --- |
+| `embeddinggemma-300M-Q8_0` | Vector embeddings | 300 MB |
+| `qwen3-reranker-0.6b-q8_0` | Deep-search reranking | 640 MB |
+| `qmd-query-expansion-1.7B-q4_k_m` | Deep-search query expansion | 1.1 GB |
+
+The first `sync`, `ingest`, or `index` with embedding enabled may download the
+embedding model. The first `deep` search may also download the reranker and
+query-expansion models.
+
+Override QMD model URIs with environment variables before indexing:
+
+```bash
+# Better multilingual/CJK embedding recall than the default English-oriented model.
+QMD_EMBED_MODEL=hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
+
+# Optional overrides. Leave empty to use QMD defaults.
+QMD_RERANK_MODEL=hf:...
+QMD_GENERATE_MODEL=hf:...
+```
+
+After changing `QMD_EMBED_MODEL`, rebuild vectors because embeddings from
+different models are not compatible:
+
+```bash
+npm run cli -- index --embed --force
+```
+
+Useful runtime knobs:
+
+- `QMD_LLAMA_GPU=auto|metal|vulkan|cuda|false`
+- `QMD_FORCE_CPU=1`
+- `SEARCHX_DEEP_SEARCH_TIMEOUT_MS=30000`
+- `SEARCHX_DEEP_SEARCH_CANDIDATE_LIMIT=16`
 
 SearchX is MarkItDown-first: it does not expose VLM, OCR, or ASR switches in the
 demo UI. Content extraction goes through MarkItDown, and optional models should

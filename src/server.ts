@@ -207,7 +207,7 @@ function getModelNotes(): Array<{ area: string; modelNeed: string; currentBehavi
     {
       area: "API / CLI",
       modelNeed: "不需要模型",
-      currentBehavior: "Web App 只是演示和验证；核心能力通过同步、任务状态、索引和搜索 API 暴露，后续可以补 CLI 封装。"
+      currentBehavior: "Web App 只是演示和验证；核心能力通过同步、任务状态、索引和搜索 API 暴露，并提供 CLI 用于添加目录、同步、建索引和搜索。"
     },
     {
       area: "QMD 自然语言检索",
