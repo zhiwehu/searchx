@@ -95,8 +95,15 @@ QMD runs local GGUF embedding/reranking/query-expansion models through
 - `deep`: QMD `search()` with local query expansion and rerank, best quality but
   slowest.
 
-The demo web app maps its `Natural language` option to deep search. Deep search
-runs in a separate worker process with a default timeout of 30s
+The demo web app maps its `Natural language` option to deep search. SearchX
+does not pass the full sentence to QMD blindly: it first extracts hard signals
+such as time (`上周`, `最近 7 天`, explicit dates), file type (`PPT`, `PDF`,
+images, audio, video, archives), and filename/path terms. Those catalog and
+Markdown exact matches are merged with QMD semantic results, so queries like
+`上周关于产品的PPT文件`, `内容有麦克风的pdf`, or `开会白板图片` can combine
+filters with content intent.
+
+Deep search runs in a separate worker process with a default timeout of 30s
 (`SEARCHX_DEEP_SEARCH_TIMEOUT_MS`) and reranks at most 16 candidates by default
 (`SEARCHX_DEEP_SEARCH_CANDIDATE_LIMIT`). If the local model path is too slow,
 SearchX kills the worker and falls back to fast hybrid search so the API and web

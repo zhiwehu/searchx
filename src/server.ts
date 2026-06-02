@@ -212,7 +212,7 @@ function getModelNotes(): Array<{ area: string; modelNeed: string; currentBehavi
     {
       area: "QMD 自然语言检索",
       modelNeed: "本地 embedding、query expansion、rerank GGUF 模型",
-      currentBehavior: "Web App 的自然语言入口默认使用深度检索：调用 QMD search() 做查询扩展和重排序，并在超时或失败时降级到快速关键词 + 向量融合。"
+      currentBehavior: "Web App 的自然语言入口默认使用深度检索：先解析时间、文件类型、文件名/路径等硬条件并扫描 Markdown 精确命中，再合并 QMD query expansion/rerank 语义结果；超时或失败时降级到快速关键词 + 向量融合。"
     }
   ];
 }
