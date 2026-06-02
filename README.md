@@ -10,7 +10,8 @@ deep natural-language reranking.
 - API: Node.js 22 HTTP server with no web framework.
 - Converter: Python worker using `markitdown`.
 - Search: `@tobilu/qmd` SDK over a local SQLite index.
-- Client: lightweight web app served by the API.
+- Client: lightweight demo web app served by the API. Real integrations should
+  use the API or CLI directly.
 - Storage: `.searchx/markdown`, `.searchx/catalog.json`, `.searchx/qmd.sqlite`.
 - Source files are treated as read-only. SearchX never writes Markdown into the
   original data directories.
@@ -26,9 +27,10 @@ python -m venv .venv
 On Windows, use `.venv\Scripts\python.exe -m pip install -r requirements.txt`
 and set `SEARCHX_PYTHON=.venv\Scripts\python.exe` when running the API.
 
-QMD downloads local GGUF models on first vector or hybrid use. For Chinese or
-mixed-language corpora, set `QMD_EMBED_MODEL` to a multilingual embedding model
-before embedding.
+QMD downloads local GGUF models on first vector or deep search use. SearchX
+builds a vector index during sync by default so the demo's natural-language
+search works after ingestion. For Chinese or mixed-language corpora, set
+`QMD_EMBED_MODEL` to a multilingual embedding model before embedding.
 
 ## Run
 
@@ -49,13 +51,13 @@ Build once, then call the CLI from `dist`:
 npm run build
 npm run cli -- status
 npm run cli -- root add "/path/to/data" --no-recursive
-npm run cli -- sync --embed
-npm run cli -- search "payment terms" --mode hybrid --limit 10
+npm run cli -- sync
+npm run cli -- search "payment terms" --mode deep --limit 10
 ```
 
 ## Workflow
 
-1. Add one or more local data directories in the web app.
+1. Add one or more local data directories in the web app, API, or CLI.
 2. Click `Sync`.
 3. The server scans the configured roots, converts supported files, and writes
    Markdown sidecars under `.searchx/markdown/<root-id>/<relative-source-path>.md`.
@@ -73,9 +75,9 @@ npm run cli -- search "payment terms" --mode hybrid --limit 10
 - `GET /api/assets`
 - `GET /api/assets/:id/raw`
 - `GET /api/assets/:id/markdown`
-- `POST /api/ingest` with `{ "path": "...", "recursive": true, "embed": false }`
-- `POST /api/sync` with `{ "rootIds": ["..."], "embed": false }`
-- `POST /api/sync/jobs` with `{ "rootIds": ["..."], "embed": false }`
+- `POST /api/ingest` with `{ "path": "...", "recursive": true, "embed": true }`
+- `POST /api/sync` with `{ "rootIds": ["..."], "embed": true }`
+- `POST /api/sync/jobs` with `{ "rootIds": ["..."], "embed": true }`
 - `GET /api/jobs/:id`
 - `POST /api/index` with `{ "embed": true, "force": false }`
 - `POST /api/search` with `{ "query": "...", "mode": "lex|vector|hybrid|deep", "limit": 10 }`
@@ -93,24 +95,42 @@ QMD runs local GGUF embedding/reranking/query-expansion models through
 - `deep`: QMD `search()` with local query expansion and rerank, best quality but
   slowest.
 
+The demo web app maps its `Natural language` option to deep search. SearchX
+does not pass the full sentence to QMD blindly: it first extracts hard signals
+such as time (`上周`, `最近 7 天`, explicit dates), file type (`PPT`, `PDF`,
+images, audio, video, archives), and filename/path terms. Those catalog and
+Markdown exact matches are merged with QMD semantic results, so queries like
+`上周关于产品的PPT文件`, `内容有麦克风的pdf`, or `开会白板图片` can combine
+filters with content intent.
+
 Deep search runs in a separate worker process with a default timeout of 30s
-(`SEARCHX_DEEP_SEARCH_TIMEOUT_MS`). If the local model path is too slow, SearchX
-kills the worker and falls back to fast hybrid search so the API and web app do
-not stay stuck in "searching" forever.
+(`SEARCHX_DEEP_SEARCH_TIMEOUT_MS`) and reranks at most 16 candidates by default
+(`SEARCHX_DEEP_SEARCH_CANDIDATE_LIMIT`). If the local model path is too slow,
+SearchX kills the worker and falls back to fast hybrid search so the API and web
+app do not stay stuck in "searching" forever.
 
-SearchX is MarkItDown-first: it does not directly call VLM, OCR, or ASR
-services. Content extraction goes through MarkItDown, and optional models should
-be exposed as MarkItDown LLM/VLM providers or plugins.
+Set `SEARCHX_QMD_EMBED_ON_INGEST=0`, or pass `"embed": false` / `--no-embed`,
+to refresh only the text index and skip vector indexing.
 
-MarkItDown runs without cloud calls by default. To let MarkItDown use an
-OpenAI-compatible local or cloud endpoint, set:
+SearchX is MarkItDown-first: it does not expose VLM, OCR, or ASR switches in the
+demo UI. Content extraction goes through MarkItDown, and optional models should
+be exposed as MarkItDown LLM/VLM providers or plugins. SearchX defaults to
+best-effort extraction: MarkItDown plugins, archive handling, and media handling
+are enabled unless explicitly disabled by environment variables.
+
+MarkItDown runs without model calls unless an OpenAI-compatible provider is
+configured. To let MarkItDown use a local or cloud endpoint, set:
 
 ```bash
-SEARCHX_MARKITDOWN_USE_LLM=1
 OPENAI_BASE_URL=http://127.0.0.1:8000/v1
 OPENAI_API_KEY=local
 SEARCHX_LLM_MODEL=openbmb/MiniCPM-V-4.6
 ```
+
+When `OPENAI_BASE_URL` and `SEARCHX_LLM_MODEL` are set, SearchX enables the
+provider automatically. If `OPENAI_API_KEY` is omitted for a local provider, the
+converter passes a dummy `local` key to satisfy OpenAI-compatible clients. Set
+`SEARCHX_MARKITDOWN_USE_LLM=0` to force model calls off.
 
 In MarkItDown 0.1.6 as installed here:
 

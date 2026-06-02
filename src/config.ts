@@ -3,6 +3,7 @@ import { loadDotEnv } from "./env.js";
 
 loadDotEnv();
 
+const falseValues = new Set(["0", "false", "FALSE", "no", "NO", "off", "OFF"]);
 const cwd = process.cwd();
 const dataDir = path.resolve(process.env.SEARCHX_DATA_DIR ?? path.join(cwd, ".searchx"));
 const xdgCacheHome = path.resolve(process.env.XDG_CACHE_HOME ?? path.join(dataDir, "cache"));
@@ -18,7 +19,7 @@ export const config = {
   catalogPath: path.join(dataDir, "catalog.json"),
   qmdDbPath: path.join(dataDir, "qmd.sqlite"),
   qmdCollection: process.env.SEARCHX_QMD_COLLECTION ?? "searchx",
-  qmdEmbedOnIngest: process.env.SEARCHX_QMD_EMBED_ON_INGEST === "1",
+  qmdEmbedOnIngest: !falseValues.has(process.env.SEARCHX_QMD_EMBED_ON_INGEST ?? ""),
   qmdChunkStrategy: process.env.SEARCHX_QMD_CHUNK_STRATEGY ?? "auto",
   pythonBin: process.env.SEARCHX_PYTHON ?? "python",
   converterScript: path.join(cwd, "python", "convert_markitdown.py"),

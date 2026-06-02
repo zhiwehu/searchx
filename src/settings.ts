@@ -30,16 +30,16 @@ type ManagedKey = (typeof managedKeys)[number];
 export function getRuntimeSettings(): RuntimeSettings {
   return {
     pythonBin: process.env.SEARCHX_PYTHON ?? config.pythonBin,
-    markitdownPlugins: process.env.SEARCHX_MARKITDOWN_PLUGINS === "1",
+    markitdownPlugins: !isFalse(process.env.SEARCHX_MARKITDOWN_PLUGINS),
     markitdownArchives: !isFalse(process.env.SEARCHX_MARKITDOWN_ARCHIVES),
     markitdownMedia: !isFalse(process.env.SEARCHX_MARKITDOWN_MEDIA),
-    markitdownUseLlm: process.env.SEARCHX_MARKITDOWN_USE_LLM === "1",
+    markitdownUseLlm: markitdownLlmEnabled(),
     llmModel: process.env.SEARCHX_LLM_MODEL ?? "",
     llmPrompt: process.env.SEARCHX_LLM_PROMPT ?? "",
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? "",
     openaiApiKey: process.env.OPENAI_API_KEY ? maskedSecret : "",
     openaiApiKeySet: Boolean(process.env.OPENAI_API_KEY),
-    qmdEmbedOnIngest: process.env.SEARCHX_QMD_EMBED_ON_INGEST === "1",
+    qmdEmbedOnIngest: !isFalse(process.env.SEARCHX_QMD_EMBED_ON_INGEST),
     qmdChunkStrategy: process.env.SEARCHX_QMD_CHUNK_STRATEGY ?? config.qmdChunkStrategy,
     qmdEmbedModel: process.env.QMD_EMBED_MODEL ?? "",
     qmdRerankModel: process.env.QMD_RERANK_MODEL ?? "",
@@ -56,7 +56,8 @@ export async function updateRuntimeSettings(patch: Partial<RuntimeSettings>): Pr
     ...current,
     ...patch,
     openaiApiKey,
-    openaiApiKeySet: Boolean(openaiApiKey)
+    openaiApiKeySet: Boolean(openaiApiKey),
+    markitdownUseLlm: patch.markitdownUseLlm ?? Boolean((patch.openaiBaseUrl ?? current.openaiBaseUrl) && (patch.llmModel ?? current.llmModel))
   };
 
   const envValues: Record<ManagedKey, string> = {
@@ -100,6 +101,12 @@ function isTruthy(value: string | undefined): boolean {
 
 function isFalse(value: string | undefined): boolean {
   return value === "0" || value === "false" || value === "FALSE" || value === "no" || value === "NO";
+}
+
+function markitdownLlmEnabled(): boolean {
+  if (isFalse(process.env.SEARCHX_MARKITDOWN_USE_LLM)) return false;
+  if (isTruthy(process.env.SEARCHX_MARKITDOWN_USE_LLM)) return true;
+  return Boolean(process.env.OPENAI_BASE_URL && process.env.SEARCHX_LLM_MODEL);
 }
 
 function normalizeSecretPatch(value: string | undefined, current: string): string {

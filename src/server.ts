@@ -192,12 +192,12 @@ function getModelNotes(): Array<{ area: string; modelNeed: string; currentBehavi
     {
       area: "图片、扫描件和多模态内容",
       modelNeed: "MarkItDown 支持的 LLM/VLM provider 或插件",
-      currentBehavior: "SearchX 不直接调用视觉/OCR 服务；开启 MarkItDown LLM/provider 或插件后，由 MarkItDown 决定如何处理图片、扫描件和内嵌媒体。"
+      currentBehavior: "SearchX 默认启用 MarkItDown 插件，并在配置了 OPENAI_BASE_URL 与 SEARCHX_LLM_MODEL 时自动让 MarkItDown 调用 VLM/provider。"
     },
     {
       area: "OCR / ASR 扩展",
       modelNeed: "MarkItDown 插件或自定义 MarkItDown adapter",
-      currentBehavior: "本地 OCR、ASR 和其他模型应作为 MarkItDown 插件/provider 接入，SearchX 只消费 MarkItDown 输出的 Markdown。"
+      currentBehavior: "本地 OCR、ASR 和其他模型作为 MarkItDown 插件/provider 接入；SearchX 只消费 MarkItDown 输出的 Markdown 并记录失败原因。"
     },
     {
       area: "批量处理",
@@ -212,7 +212,7 @@ function getModelNotes(): Array<{ area: string; modelNeed: string; currentBehavi
     {
       area: "QMD 自然语言检索",
       modelNeed: "本地 embedding、query expansion、rerank GGUF 模型",
-      currentBehavior: "快速自然语言只做关键词 + 向量融合；深度自然语言会调用 QMD search()，使用本地模型做查询扩展和重排序。"
+      currentBehavior: "Web App 的自然语言入口默认使用深度检索：先解析时间、文件类型、文件名/路径等硬条件并扫描 Markdown 精确命中，再合并 QMD query expansion/rerank 语义结果；超时或失败时降级到快速关键词 + 向量融合。"
     }
   ];
 }

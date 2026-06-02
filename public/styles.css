@@ -165,18 +165,6 @@ label span {
   margin-top: 12px;
 }
 
-.settings-form {
-  display: grid;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.settings-form h3 {
-  margin: 8px 0 0;
-  color: var(--text);
-  font-size: 14px;
-}
-
 .checkline {
   display: flex;
   align-items: center;
@@ -267,22 +255,10 @@ progress {
   accent-color: var(--accent);
 }
 
-.progress-stats,
-.model-notes {
+.progress-stats {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-}
-
-.model-notes {
-  display: grid;
-  gap: 7px;
-  margin-top: 12px;
-}
-
-.model-note {
-  border-left: 3px solid var(--line);
-  padding-left: 8px;
 }
 
 .searchbar {

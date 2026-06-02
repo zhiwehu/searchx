@@ -1,4 +1,5 @@
 import { catalog } from "./catalog.js";
+import { config } from "./config.js";
 import { ingestPath, syncConfiguredRoots } from "./ingest.js";
 import { closeQmdStore, getQmdStatus, parseSearchMode, refreshQmdIndex, searchQmd } from "./qmdService.js";
 import { runWorkflowTask } from "./workflowQueue.js";
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
       await handleSync(args);
       return;
     case "index":
-      printJson(await runWorkflowTask(() => refreshQmdIndex({ embed: flagEnabled(args, "embed"), force: flagEnabled(args, "force") })));
+      printJson(await runWorkflowTask(() => refreshQmdIndex({ embed: embedEnabled(args), force: flagEnabled(args, "force") })));
       return;
     case "search":
       await handleSearch(args);
@@ -72,13 +73,14 @@ async function handleRoot(args: ParsedArgs): Promise<void> {
 async function handleIngest(args: ParsedArgs): Promise<void> {
   const [sourcePath] = args.positional;
   if (!sourcePath) throw new Error("Missing path.");
+  const embed = embedEnabled(args);
   const result = await runWorkflowTask(async () => {
     const ingestResult = await ingestPath({
       path: sourcePath,
       recursive: !flagEnabled(args, "no-recursive"),
-      embed: flagEnabled(args, "embed")
+      embed
     });
-    if (flagEnabled(args, "embed")) {
+    if (embed) {
       ingestResult.index = await refreshQmdIndex({ embed: true, force: flagEnabled(args, "force") });
     }
     return ingestResult;
@@ -87,13 +89,14 @@ async function handleIngest(args: ParsedArgs): Promise<void> {
 }
 
 async function handleSync(args: ParsedArgs): Promise<void> {
+  const embed = embedEnabled(args);
   const result = await runWorkflowTask(async () => {
     const syncResult = await syncConfiguredRoots({
-      embed: flagEnabled(args, "embed"),
+      embed,
       force: flagEnabled(args, "force")
     });
     syncResult.index = await refreshQmdIndex({
-      embed: flagEnabled(args, "embed"),
+      embed,
       force: flagEnabled(args, "force")
     });
     return syncResult;
@@ -155,6 +158,12 @@ function numberFlag(args: ParsedArgs, name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function embedEnabled(args: ParsedArgs): boolean {
+  if (args.flags.has("embed")) return flagEnabled(args, "embed");
+  if (args.flags.has("no-embed")) return false;
+  return config.qmdEmbedOnIngest;
+}
+
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -167,9 +176,9 @@ Commands:
   searchx status
   searchx root list
   searchx root add <path> [--name <name>] [--no-recursive]
-  searchx ingest <path> [--embed] [--force]
-  searchx sync [--embed] [--force]
-  searchx index [--embed] [--force]
+  searchx ingest <path> [--embed|--no-embed] [--force]
+  searchx sync [--embed|--no-embed] [--force]
+  searchx index [--embed|--no-embed] [--force]
   searchx search <query> [--mode lex|vector|hybrid|deep] [--limit 10]
 `);
 }
