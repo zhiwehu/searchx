@@ -127,3 +127,7 @@ In MarkItDown 0.1.6 as installed here:
 The web app is a demo and validation client. The intended integration surface is
 the API and CLI, so other applications or agents can add roots, sync, inspect
 jobs, rebuild indexes, and search without depending on the browser UI.
+
+## License
+
+SearchX is released under the MIT License. See [LICENSE](LICENSE).
