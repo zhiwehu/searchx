@@ -36,6 +36,10 @@ export function getJob(id: string): ProgressJob<SyncResult> | undefined {
   return jobs.get(id);
 }
 
+export function listJobs(): Array<ProgressJob<SyncResult>> {
+  return Array.from(jobs.values()).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
 async function runSyncJob(job: ProgressJob<SyncResult>, request: SyncRequest): Promise<void> {
   updateJob(job, {
     phase: "scanning",
@@ -61,12 +65,28 @@ async function runSyncJob(job: ProgressJob<SyncResult>, request: SyncRequest): P
       });
     }
 
-    result.index = await refreshQmdIndex({ embed: request.embed, force: request.force });
+    let indexError: string | undefined;
+    try {
+      result.index = await refreshQmdIndex({ embed: request.embed, force: request.force }, (progress) => {
+        updateJob(job, {
+          phase: progress.phase,
+          message: progress.message,
+          processed: job.progress.processed,
+          total: Math.max(job.progress.total, job.progress.processed)
+        });
+      });
+    } catch (error) {
+      indexError = errorMessage(error);
+      result.index = { error: indexError };
+    }
+
     job.result = result;
     job.status = "completed";
     updateJob(job, {
       phase: "done",
-      message: `同步完成：转换 ${result.converted.length}，未变化 ${result.unchanged.length}，跳过 ${result.skipped.length}。`,
+      message: indexError
+        ? `文件同步完成，但 QMD 索引失败：${indexError}`
+        : `同步完成：转换 ${result.converted.length}，未变化 ${result.unchanged.length}，跳过 ${result.skipped.length}。`,
       processed: result.scanned,
       total: result.scanned,
       converted: result.converted.length,
@@ -82,6 +102,10 @@ async function runSyncJob(job: ProgressJob<SyncResult>, request: SyncRequest): P
       message: job.error
     });
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function updateJob(job: ProgressJob<SyncResult>, patch: Partial<SyncProgress>): void {

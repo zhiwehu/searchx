@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -40,6 +43,7 @@ IMAGE_EXTENSIONS = {
 }
 
 ARCHIVE_EXTENSIONS = {".7z", ".gz", ".rar", ".tar", ".zip"}
+PDF_EXTENSIONS = {".pdf"}
 ARCHIVE_TEXT_MAX_FILES_DEFAULT = 40
 ARCHIVE_TEXT_MAX_BYTES_DEFAULT = 200_000
 AUDIO_VIDEO_EXTENSIONS = {
@@ -64,6 +68,8 @@ AUDIO_VIDEO_EXTENSIONS = {
 }
 
 FALSE_VALUES = {"0", "false", "FALSE", "no", "NO", "off", "OFF"}
+DEFAULT_DOCLING_MIN_MARKITDOWN_CHARS = 200
+DEFAULT_DOCLING_TIMEOUT_MS = 180_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,6 +108,13 @@ def disabled(name: str) -> bool:
 def int_env(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
     except ValueError:
         return default
 
@@ -196,7 +209,10 @@ def build_markitdown(allow_llm: bool = False) -> Any:
     if enable_llm and llm_model:
         from openai import OpenAI
 
-        client_kwargs: dict[str, str] = {}
+        client_kwargs: dict[str, Any] = {
+            "timeout": float_env("SEARCHX_LLM_TIMEOUT_SEC", 30.0),
+            "max_retries": int_env("SEARCHX_LLM_MAX_RETRIES", 0),
+        }
         base_url = os.environ.get("OPENAI_BASE_URL")
         api_key = os.environ.get("OPENAI_API_KEY")
         if base_url:
@@ -226,10 +242,127 @@ def should_use_llm_provider() -> bool:
     return bool(os.environ.get("OPENAI_BASE_URL") and os.environ.get("SEARCHX_LLM_MODEL"))
 
 
-def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
+def llm_extensions() -> set[str] | None:
+    raw = os.environ.get("SEARCHX_MARKITDOWN_LLM_EXTENSIONS")
+    if raw is None:
+        return None
+    values = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    if "*" in values or "all" in values:
+        return None
+    return {value if value.startswith(".") else f".{value}" for value in values}
+
+
+def should_use_llm_for_source(source: Path) -> bool:
+    if not should_use_llm_provider():
+        return False
+    allowed = llm_extensions()
+    if allowed is None:
+        return True
+    return source.suffix.lower() in allowed
+
+
+def env_extensions(name: str, default: set[str]) -> set[str]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    values = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    return {value if value.startswith(".") else f".{value}" for value in values}
+
+
+def docling_enabled() -> bool:
+    return enabled("SEARCHX_DOCLING_ENABLED")
+
+
+def should_try_docling(source: Path, markitdown_text: str, markitdown_attempted: bool) -> tuple[bool, str | None]:
+    if not docling_enabled():
+        return False, None
+    if source.suffix.lower() not in env_extensions("SEARCHX_DOCLING_EXTENSIONS", PDF_EXTENSIONS):
+        return False, None
+
+    mode = os.environ.get("SEARCHX_DOCLING_MODE", "fallback").strip().lower()
+    if mode == "always":
+        return True, "configured_always"
+
+    if mode != "fallback":
+        return False, f"Unsupported SEARCHX_DOCLING_MODE={mode}"
+
+    min_chars = int_env("SEARCHX_DOCLING_MIN_MARKITDOWN_CHARS", DEFAULT_DOCLING_MIN_MARKITDOWN_CHARS)
+    if not markitdown_attempted:
+        return True, "markitdown_not_attempted"
+    if len(markitdown_text.strip()) < min_chars:
+        return True, "short_markitdown_output"
+    return False, None
+
+
+def run_docling(source: Path) -> tuple[str, str | None]:
+    script = Path(__file__).with_name("convert_docling.py")
+    python_bin = os.environ.get("SEARCHX_DOCLING_PYTHON") or sys.executable
+    timeout = int_env("SEARCHX_DOCLING_TIMEOUT_MS", DEFAULT_DOCLING_TIMEOUT_MS) / 1000
+    env = os.environ.copy()
+    if "HF_HOME" not in env:
+        cache_root = env.get("SEARCHX_DOCLING_CACHE_DIR")
+        if cache_root is None:
+            cache_root = str(Path(env.get("XDG_CACHE_HOME", ".searchx/cache")) / "docling" / "hf")
+        env["HF_HOME"] = cache_root
+
+    with tempfile.NamedTemporaryFile(prefix="searchx-docling-", suffix=".md", delete=False) as temp:
+        output_path = Path(temp.name)
+
+    try:
+        completed = subprocess.run(
+            [python_bin, str(script), "--input", str(source), "--output", str(output_path)],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        payload = json_payload_from_output(completed.stdout)
+        if completed.returncode != 0:
+            detail = payload.get("error") if payload else ""
+            if not detail:
+                detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
+            return "", f"Docling failed: {detail}"
+
+        if payload is None:
+            return "", "Docling returned invalid JSON."
+        if payload.get("status") != "ok":
+            return "", f"Docling failed: {payload.get('error') or 'unknown error'}"
+
+        text = output_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not text:
+            return "", "Docling produced no text."
+        return text, None
+    except subprocess.TimeoutExpired:
+        return "", f"Docling timed out after {int(timeout * 1000)}ms."
+    except Exception as exc:
+        return "", f"Docling failed: {exc}"
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
+def json_payload_from_output(output: str) -> dict[str, Any] | None:
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None, str, str | None]:
     sections: list[str] = []
     errors: list[str] = []
     markitdown_attempted = False
+    markitdown_text = ""
+    conversion_engine = "markitdown"
+    fallback_reason: str | None = None
 
     if source.suffix.lower() in ARCHIVE_EXTENSIONS and not disabled("SEARCHX_MARKITDOWN_ARCHIVES"):
         archive_text, archive_error = archive_section(source)
@@ -241,7 +374,7 @@ def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
     if should_run_markitdown(source):
         markitdown_attempted = True
         try:
-            md = build_markitdown(allow_llm=should_use_llm_provider())
+            md = build_markitdown(allow_llm=should_use_llm_for_source(source))
             result = md.convert(str(source))
             markitdown_text = (getattr(result, "text_content", "") or "").strip()
             if markitdown_text:
@@ -249,6 +382,16 @@ def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
 
         except Exception as exc:
             errors.append(f"MarkItDown failed: {exc}")
+
+    use_docling, docling_reason = should_try_docling(source, markitdown_text, markitdown_attempted)
+    if use_docling:
+        docling_text, docling_error = run_docling(source)
+        if docling_text:
+            sections = ["\n".join(["## Docling extracted content", "", docling_text])]
+            conversion_engine = "markitdown+docling" if markitdown_attempted else "docling"
+            fallback_reason = docling_reason
+        elif docling_error:
+            errors.append(docling_error)
 
     if source.suffix.lower() in ARCHIVE_EXTENSIONS and (not markitdown_attempted or errors) and not sections:
         archive_text, archive_error = archive_section(source)
@@ -263,14 +406,21 @@ def convert(source: Path, mode: str = "single") -> tuple[str, str, str | None]:
             sections.append("\n".join(["## Raw text fallback", "", fallback.strip()]))
 
     if sections:
-        return "\n\n".join(sections), "ok", "; ".join(errors) or None
+        return "\n\n".join(sections), "ok", "; ".join(errors) or None, conversion_engine, fallback_reason
 
     if errors:
-        return "", "metadata_only", "; ".join(errors)
-    return "", "metadata_only", "No text content was extracted."
+        return "", "metadata_only", "; ".join(errors), conversion_engine, fallback_reason
+    return "", "metadata_only", "No text content was extracted.", conversion_engine, fallback_reason
 
 
-def write_sidecar(args: argparse.Namespace, text: str, status: str, error: str | None) -> None:
+def write_sidecar(
+    args: argparse.Namespace,
+    text: str,
+    status: str,
+    error: str | None,
+    engine: str,
+    fallback_reason: str | None,
+) -> None:
     source = Path(args.input).resolve()
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -287,6 +437,8 @@ def write_sidecar(args: argparse.Namespace, text: str, status: str, error: str |
         f"mtime_ms: {args.mtime_ms}",
         f"conversion_status: {yaml_value(status)}",
         f"conversion_error: {yaml_value(error)}",
+        f"conversion_engine: {yaml_value(engine)}",
+        f"conversion_fallback_reason: {yaml_value(fallback_reason)}",
         "---",
         "",
     ]
@@ -317,9 +469,9 @@ def write_sidecar(args: argparse.Namespace, text: str, status: str, error: str |
 
 def main() -> int:
     args = parse_args()
-    text, status, error = convert(Path(args.input), args.mode)
-    write_sidecar(args, text, status, error)
-    print(json.dumps({"status": status, "error": error}, ensure_ascii=False))
+    text, status, error, engine, fallback_reason = convert(Path(args.input), args.mode)
+    write_sidecar(args, text, status, error, engine, fallback_reason)
+    print(json.dumps({"status": status, "error": error, "engine": engine, "fallback_reason": fallback_reason}, ensure_ascii=False))
     return 0
 
 

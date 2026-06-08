@@ -33,7 +33,12 @@ export async function serveStatic(urlPath: string, response: ServerResponse): Pr
   }
 }
 
-export async function streamFile(filePath: string, response: ServerResponse): Promise<void> {
+export type StreamFileOptions = {
+  contentType?: string;
+  downloadName?: string;
+};
+
+export async function streamFile(filePath: string, response: ServerResponse, options: StreamFileOptions = {}): Promise<void> {
   const stat = await fsp.stat(filePath);
   if (!stat.isFile()) {
     response.writeHead(404);
@@ -41,12 +46,27 @@ export async function streamFile(filePath: string, response: ServerResponse): Pr
     return;
   }
 
-  response.writeHead(200, {
-    "content-type": guessMimeType(filePath),
+  const headers: Record<string, string | number> = {
+    "content-type": options.contentType ?? guessMimeType(filePath),
     "content-length": stat.size,
     "cache-control": "private, max-age=60"
-  });
+  };
+  if (options.downloadName) {
+    headers["content-disposition"] = contentDisposition(options.downloadName);
+  }
+  response.writeHead(200, headers);
   fs.createReadStream(filePath).pipe(response);
+}
+
+function contentDisposition(filename: string): string {
+  const fallback =
+    filename
+      .replaceAll("\\", "_")
+      .replaceAll('"', "'")
+      .replaceAll(/\r?\n/g, " ")
+      .replaceAll(/[^\x20-\x7e]/g, "_")
+      .trim() || "download";
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 export function isPathInsideRoot(root: string, target: string): boolean {

@@ -5,6 +5,8 @@ It converts source files into Markdown with Microsoft MarkItDown, then indexes t
 generated Markdown with QMD for BM25, vector search, fast hybrid search, and
 deep natural-language reranking.
 
+![SearchX sync and indexing flow](docs/searchx-sync-flow.png)
+
 ## Current shape
 
 - API: Node.js 22 HTTP server with no web framework.
@@ -42,6 +44,82 @@ Open `http://127.0.0.1:7310`.
 
 If you installed Python dependencies into `.venv`, export `SEARCHX_PYTHON` first
 or copy `.env.example` to `.env` and adjust it for your shell.
+
+## Docker deployment on Ubuntu 22.04
+
+SearchX can run as a single Docker Compose service. The image includes Node.js
+22, Python, MarkItDown, LibreOffice, Poppler, ffmpeg, Tesseract OCR, and CJK
+fonts. On Linux, Office/PPT previews are rendered by converting the first page
+or slide through LibreOffice and Poppler; images and PDFs are streamed directly.
+
+On the Ubuntu host:
+
+```bash
+git clone <this-repo-url> searchx
+cd searchx
+cp .env.docker.example .env.docker
+mkdir -p searchx-data
+```
+
+Edit `.env.docker` and point `SEARCHX_FILES_DIR` at the host directory you want
+to search:
+
+```dotenv
+SEARCHX_FILES_DIR=/home/ubuntu/files
+SEARCHX_STATE_DIR=./searchx-data
+SEARCHX_PORT=7310
+```
+
+Build and start:
+
+```bash
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker logs -f searchx
+```
+
+Open `http://<server-ip>:7310`, go to configuration, add `/data` as the source
+folder, then start sync. The container sees your host `SEARCHX_FILES_DIR` as
+read-only `/data`. SearchX writes catalog data, Markdown mirrors, previews,
+SQLite indexes, and downloaded QMD models into `SEARCHX_STATE_DIR`.
+
+If the state directory is not writable by the container user, fix ownership on
+the host:
+
+```bash
+sudo chown -R 1000:1000 searchx-data
+```
+
+For an Intel Ultra 5-225H machine with 32 GB RAM, the Docker defaults are set to
+safe CPU mode:
+
+```dotenv
+QMD_FORCE_CPU=1
+QMD_LLAMA_GPU=false
+```
+
+The first sync or deep search may download several GB of QMD GGUF models into
+`searchx-data/cache/qmd/models`, so keep the state directory on a disk with
+enough free space. For Chinese or mixed-language corpora, consider the Qwen
+embedding override in `.env.docker.example`, then rebuild vectors:
+
+```bash
+docker compose --env-file .env.docker exec searchx node dist/src/cli.js index --embed --force
+```
+
+If you run a local OpenAI-compatible VLM/LLM service on the Ubuntu host, point
+MarkItDown to it with `host.docker.internal`:
+
+```dotenv
+OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_API_KEY=local
+SEARCHX_LLM_MODEL=qwen2.5vl:7b
+SEARCHX_MARKITDOWN_USE_LLM=1
+```
+
+Optional Docling PDF fallback is disabled by default to keep the image smaller.
+Enable it by setting `INSTALL_DOCLING=1` before building and
+`SEARCHX_DOCLING_ENABLED=1` at runtime.
 
 ## CLI
 
@@ -192,6 +270,8 @@ Useful runtime knobs:
 
 - `QMD_LLAMA_GPU=auto|metal|vulkan|cuda|false`
 - `QMD_FORCE_CPU=1`
+- `SEARCHX_QMD_UPDATE_TIMEOUT_MS=120000`
+- `SEARCHX_QMD_EMBED_TIMEOUT_MS=1800000`
 - `SEARCHX_DEEP_SEARCH_TIMEOUT_MS=30000`
 - `SEARCHX_DEEP_SEARCH_CANDIDATE_LIMIT=16`
 
@@ -215,15 +295,75 @@ provider automatically. If `OPENAI_API_KEY` is omitted for a local provider, the
 converter passes a dummy `local` key to satisfy OpenAI-compatible clients. Set
 `SEARCHX_MARKITDOWN_USE_LLM=0` to force model calls off.
 
+Use `SEARCHX_MARKITDOWN_LLM_EXTENSIONS` to limit which source file types receive
+the MarkItDown LLM/VLM client. For faster PPTX ingestion, keep this list to
+standalone image extensions so PowerPoint text and tables are still parsed, but
+embedded slide images are not sent through VLM captioning. When using
+`llama.cpp` multimodal servers, prefer JPEG/PNG; its `libmtmd` helper decodes
+data-URI image bytes through `stb_image`, so formats such as WebP/HEIC/AVIF can
+surface server logs like `mtmd_helper_bitmap_init_from_buf: failed to decode
+image bytes` unless they are normalized first.
+
+```bash
+SEARCHX_MARKITDOWN_LLM_EXTENSIONS=.jpg,.jpeg,.png
+```
+
+Set `SEARCHX_LLM_TIMEOUT_SEC` and `SEARCHX_LLM_MAX_RETRIES` to keep unstable
+local VLM calls from blocking a sync run on one image:
+
+```bash
+SEARCHX_LLM_TIMEOUT_SEC=30
+SEARCHX_LLM_MAX_RETRIES=0
+```
+
 In MarkItDown 0.1.6 as installed here:
 
 - Plain document conversion does not require a model.
-- Image descriptions and PPTX image captions use an OpenAI-compatible vision model.
+- Image descriptions and PPTX image captions use an OpenAI-compatible vision
+  model when the source extension is allowed by
+  `SEARCHX_MARKITDOWN_LLM_EXTENSIONS`.
 - `markitdown-ocr` uses the same vision model for embedded-image OCR in PDF,
   DOCX, PPTX, and XLSX files.
 - Audio transcription currently uses `speech_recognition` with Google
   recognition; a local-first production pipeline should replace this with a
   local ASR engine such as Whisper or faster-whisper.
+
+### Optional Docling PDF fallback
+
+SearchX can use Docling as a slow, high-quality PDF fallback while keeping
+MarkItDown as the default fast converter. This is useful for scanned PDFs,
+licenses, certificates, and image-heavy PDFs where MarkItDown extracts little or
+no text.
+
+Install Docling only when you need this path:
+
+```bash
+.venv/bin/python -m pip install -r requirements-docling.txt
+```
+
+Then enable the fallback:
+
+```bash
+SEARCHX_DOCLING_ENABLED=1
+SEARCHX_DOCLING_EXTENSIONS=.pdf
+SEARCHX_DOCLING_MODE=fallback
+SEARCHX_DOCLING_MIN_MARKITDOWN_CHARS=200
+SEARCHX_DOCLING_TIMEOUT_MS=180000
+SEARCHX_CONVERTER_TIMEOUT_MS=240000
+SEARCHX_DOCLING_CACHE_DIR=.searchx/cache/docling/hf
+DOCLING_DEVICE=cpu
+DOCLING_NUM_THREADS=4
+```
+
+With `fallback` mode, SearchX first runs MarkItDown. Docling is invoked only
+when the source extension is allowed and the MarkItDown output is shorter than
+`SEARCHX_DOCLING_MIN_MARKITDOWN_CHARS`. If Docling fails or times out, the
+MarkItDown result is kept and the error is recorded in the Markdown sidecar.
+Keep `SEARCHX_CONVERTER_TIMEOUT_MS` higher than `SEARCHX_DOCLING_TIMEOUT_MS` so
+the outer Node converter timeout does not fire before Docling can return.
+Docling model downloads are cached under `SEARCHX_DOCLING_CACHE_DIR` by default.
+Use `DOCLING_DEVICE=cpu` by default on Apple Silicon because Docling's current
+standard PDF layout path can fail on MPS with float64 tensor operations.
 
 ## Notes
 

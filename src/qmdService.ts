@@ -32,8 +32,23 @@ type DeepSearchWorkerEntrypoint = {
   execArgv: string[];
 };
 
+type QmdIndexWorkerEntrypoint = {
+  path: string;
+  execArgv: string[];
+};
+
 type DeepSearchWorkerMessage =
   | { type: "result"; results: unknown[] }
+  | { type: "error"; error: string };
+
+type QmdIndexProgress = {
+  phase: "indexing" | "embedding";
+  message: string;
+};
+
+type QmdIndexWorkerMessage =
+  | { type: "progress"; phase: "indexing" | "embedding"; message: string }
+  | { type: "result"; result: unknown }
   | { type: "error"; error: string };
 
 type SearchIntent = {
@@ -42,6 +57,7 @@ type SearchIntent = {
   terms: string[];
   typeFilters: FileTypeFilter[];
   dateRange?: DateRange;
+  visualContent: boolean;
 };
 
 type DateRange = {
@@ -139,6 +155,7 @@ const timePatterns = [
 ];
 
 const fillerPatterns = [
+  /帮我找到|帮我找|帮忙找|请帮我|麻烦帮我|我想要|想要|我想找|想找|我要找|查找|麻烦|帮忙|帮我|找到|找一下|找出|寻找|找找|找/g,
   /文件|资料|内容|关于|包含|包括|查找|搜索|检索|查询|里面|中|里|有|的/g,
   /\b(?:file|files|about|with|contains?|search|find|in)\b/gi
 ];
@@ -157,11 +174,28 @@ export async function closeQmdStore(): Promise<void> {
   storePromise = undefined;
 }
 
-export async function refreshQmdIndex(options: { embed?: boolean; force?: boolean } = {}): Promise<unknown> {
+export async function refreshQmdIndex(
+  options: { embed?: boolean; force?: boolean } = {},
+  report?: (progress: QmdIndexProgress) => void
+): Promise<unknown> {
   await fs.mkdir(config.markdownDir, { recursive: true });
+  const worker = await resolveQmdIndexWorker();
+  if (worker) {
+    await closeQmdStore();
+    return runQmdIndexWorker(worker, options, report);
+  }
+
   const store = await getQmdStore();
   const update = await store.update({
-    collections: [config.qmdCollection]
+    collections: [config.qmdCollection],
+    onProgress: (info: Record<string, unknown>) => {
+      const current = typeof info.current === "number" ? info.current : 0;
+      const total = typeof info.total === "number" ? info.total : 0;
+      report?.({
+        phase: "indexing",
+        message: total > 0 ? `刷新 QMD 文本索引：${current}/${total}` : "刷新 QMD 文本索引。"
+      });
+    }
   });
 
   if (!options.embed) {
@@ -170,7 +204,16 @@ export async function refreshQmdIndex(options: { embed?: boolean; force?: boolea
 
   const embed = await store.embed({
     force: options.force === true,
-    chunkStrategy: config.qmdChunkStrategy
+    chunkStrategy: config.qmdChunkStrategy,
+    onProgress: (info: Record<string, unknown>) => {
+      const chunksEmbedded = typeof info.chunksEmbedded === "number" ? info.chunksEmbedded : 0;
+      const totalChunks = typeof info.totalChunks === "number" ? info.totalChunks : 0;
+      const errors = typeof info.errors === "number" ? info.errors : 0;
+      report?.({
+        phase: "embedding",
+        message: `生成 QMD 向量索引：chunks ${chunksEmbedded}/${totalChunks}${errors > 0 ? `, errors ${errors}` : ""}`
+      });
+    }
   });
   return { update, embed };
 }
@@ -196,7 +239,7 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
       throw Object.assign(new Error("还没有向量索引。请先重新同步，或调用 /api/index 生成向量索引。"), { statusCode: 400 });
     }
     mode = "lex";
-    warning = "还没有生成 QMD 向量索引，本次已自动降级为关键词检索。重新同步或调用 /api/index 生成向量索引后，自然语言模式会更准。";
+    warning = "还没有生成 QMD 向量索引，本次已自动降级为关键词检索。重新同步或调用 /api/index 生成向量索引后，智能检索会更准。";
   }
 
   const assets = await catalog.list();
@@ -206,15 +249,15 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
     if (mode === "lex") {
       const rawResults = await store.searchLex(semanticQuery, { limit, minScore, collection: config.qmdCollection });
       const qmdResults = filterResultsByIntent(rawResults.map((result) => normalizeResult(result, assets)), intent);
-      results = mergeRankedResults([catalogResults, qmdResults], limit);
+      results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
     } else if (mode === "vector") {
       const rawResults = await store.searchVector(semanticQuery, { limit, minScore, collection: config.qmdCollection });
       const qmdResults = filterResultsByIntent(rawResults.map((result) => normalizeResult(result, assets)), intent);
-      results = mergeRankedResults([catalogResults, qmdResults], limit);
+      results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
     } else if (mode === "hybrid") {
       const qmdResults = await searchFastHybrid(store, semanticQuery, { limit, minScore }, assets, intent);
-      results = mergeRankedResults([catalogResults, qmdResults], limit);
-      warning = warning ?? "快速自然语言模式使用关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
+      results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
+      warning = warning ?? "快速混合模式使用关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
     } else {
       const rawResults = await searchDeep(store, {
         query: semanticQuery,
@@ -225,26 +268,26 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
         chunkStrategy: config.qmdChunkStrategy
       });
       const qmdResults = filterResultsByIntent(rawResults.map((result) => normalizeResult(result, assets)), intent);
-      results = mergeRankedResults([catalogResults, qmdResults], limit);
+      results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
     }
   } catch (error) {
     if (mode === "deep") {
       try {
         const qmdResults = await searchFastHybrid(store, semanticQuery, { limit, minScore }, assets, intent);
-        results = mergeRankedResults([catalogResults, qmdResults], limit);
+        results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
         mode = "hybrid";
-        warning = `深度自然语言检索暂不可用，本次已降级为快速混合检索：${errorMessage(error)}`;
+        warning = `深度检索暂不可用，本次已降级为快速混合检索：${errorMessage(error)}`;
       } catch (fallbackError) {
         const rawResults = await store.searchLex(semanticQuery, { limit, minScore, collection: config.qmdCollection });
         const qmdResults = filterResultsByIntent(rawResults.map((result) => normalizeResult(result, assets)), intent);
-        results = mergeRankedResults([catalogResults, qmdResults], limit);
+        results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
         mode = "lex";
-        warning = `深度自然语言检索暂不可用，快速混合检索也失败，本次已降级为关键词检索：${errorMessage(fallbackError)}`;
+        warning = `深度检索暂不可用，快速混合检索也失败，本次已降级为关键词检索：${errorMessage(fallbackError)}`;
       }
     } else if (mode === "hybrid") {
       const rawResults = await store.searchLex(semanticQuery, { limit, minScore, collection: config.qmdCollection });
       const qmdResults = filterResultsByIntent(rawResults.map((result) => normalizeResult(result, assets)), intent);
-      results = mergeRankedResults([catalogResults, qmdResults], limit);
+      results = mergeIntentResults(intent, catalogResults, qmdResults, limit);
       mode = "lex";
       warning = `向量检索暂不可用，本次已降级为关键词检索：${errorMessage(error)}`;
     } else {
@@ -295,13 +338,28 @@ export function analyzeSearchQuery(query: string, now = new Date()): SearchInten
   }
 
   semanticQuery = normalizeQueryText(semanticQuery);
+  const terms = extractTerms(semanticQuery);
   return {
     originalQuery: query,
     semanticQuery,
-    terms: extractTerms(semanticQuery),
+    terms,
     typeFilters,
-    dateRange
+    dateRange,
+    visualContent: isVisualContentQuery(query, semanticQuery, terms, typeFilters)
   };
+}
+
+function isVisualContentQuery(
+  originalQuery: string,
+  semanticQuery: string,
+  terms: string[],
+  typeFilters: FileTypeFilter[]
+): boolean {
+  if (!typeFilters.some((filter) => filter.kinds.includes("image"))) return false;
+  if (terms.length === 0 || compactForMatch(semanticQuery).length === 0) return false;
+  if (/\.[a-z0-9]{1,8}\b/i.test(originalQuery)) return false;
+  if (/文件名|路径|后缀|扩展名/.test(originalQuery)) return false;
+  return true;
 }
 
 async function searchCatalogMatches(intent: SearchIntent, assets: IngestedAsset[], limit: number): Promise<SearchResultItem[]> {
@@ -366,7 +424,7 @@ async function searchCatalogMatches(intent: SearchIntent, assets: IngestedAsset[
     scored.push({
       id: asset.id,
       title: asset.title,
-      score: rankScore,
+      score: normalizeCatalogScore(rankScore),
       rankScore,
       snippet,
       displayPath: asset.relativePath,
@@ -386,6 +444,11 @@ async function searchCatalogMatches(intent: SearchIntent, assets: IngestedAsset[
     .sort((a, b) => b.rankScore - a.rankScore || b.source!.mtimeMs - a.source!.mtimeMs)
     .slice(0, Math.min(Math.max(limit * 2, limit), 50))
     .map(({ rankScore: _rankScore, ...item }) => item);
+}
+
+function normalizeCatalogScore(rankScore: number): number {
+  if (!Number.isFinite(rankScore) || rankScore <= 0) return 0;
+  return Math.max(0.01, Math.min(0.99, rankScore / 100));
 }
 
 async function readMarkdownMatch(asset: IngestedAsset, intent: SearchIntent): Promise<{ rankScore: number; snippet?: string; reasons: string[] }> {
@@ -542,6 +605,16 @@ async function searchFastHybrid(
   const vectorItems = vectorRaw.map((result) => normalizeResult(result, assets));
   const merged = mergeRankedResults([lexItems, vectorItems], options.limit);
   return intent ? filterResultsByIntent(merged, intent) : merged;
+}
+
+function mergeIntentResults(
+  intent: SearchIntent,
+  catalogResults: SearchResultItem[],
+  qmdResults: SearchResultItem[],
+  limit: number
+): SearchResultItem[] {
+  const lists = intent.visualContent ? [qmdResults, catalogResults] : [catalogResults, qmdResults];
+  return mergeRankedResults(lists, limit);
 }
 
 function mergeRankedResults(lists: SearchResultItem[][], limit: number): SearchResultItem[] {
@@ -801,14 +874,16 @@ function extractTerms(value: string): string[] {
   if (compact.length >= 2 && !isStopTerm(compact)) terms.add(compact);
   if (/^\p{Script=Han}{4,}$/u.test(compact)) {
     for (let index = 0; index < compact.length - 1; index += 2) {
-      terms.add(compact.slice(index, index + 2));
+      const chunk = compact.slice(index, index + 2);
+      if (!isStopTerm(chunk)) terms.add(chunk);
     }
   }
   return Array.from(terms);
 }
 
 function isStopTerm(value: string): boolean {
-  return /^(的|和|或|与|在|有|内容|关于|文件|资料|搜索|查询|查找|包含|包括)$/.test(value);
+  const compact = compactForMatch(value);
+  return /^(的|和|或|与|在|有|中|里|人|的人|人物|一张|一份|一个|一些|内容|关于|文件|资料|图片|图像|照片|截图|搜索|查询|查找|检索|包含|包括|帮我|帮忙|麻烦|找到|寻找|找)$/.test(compact);
 }
 
 function matchContains(value: string | undefined, query: string | undefined): boolean {
@@ -858,6 +933,71 @@ async function searchDeep(store: QmdStore, options: DeepSearchOptions): Promise<
   const worker = await resolveDeepSearchWorker();
   if (!worker) return store.search(options);
   return runDeepSearchWorker(worker, options);
+}
+
+async function resolveQmdIndexWorker(): Promise<QmdIndexWorkerEntrypoint | undefined> {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const jsWorkerPath = path.join(dir, "qmdIndexWorker.js");
+  if (await pathExists(jsWorkerPath)) {
+    return { path: jsWorkerPath, execArgv: [] };
+  }
+
+  const tsWorkerPath = path.join(dir, "qmdIndexWorker.ts");
+  if (await pathExists(tsWorkerPath)) {
+    return { path: tsWorkerPath, execArgv: process.execArgv };
+  }
+
+  return undefined;
+}
+
+function runQmdIndexWorker(
+  worker: QmdIndexWorkerEntrypoint,
+  options: { embed?: boolean; force?: boolean },
+  report?: (progress: QmdIndexProgress) => void
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stderr = "";
+    const encoded = Buffer.from(JSON.stringify(options), "utf8").toString("base64url");
+    const child = fork(worker.path, [encoded], {
+      cwd: config.cwd,
+      env: process.env,
+      execArgv: worker.execArgv,
+      stdio: ["ignore", "ignore", "pipe", "ipc"]
+    });
+    const timeoutMs = options.embed ? config.qmdEmbedTimeoutMs : config.qmdUpdateTimeoutMs;
+    const timeout = setTimeout(() => {
+      killProcessTree(child);
+      finish(() => reject(new Error(`QMD ${options.embed ? "embed" : "update"} timed out after ${timeoutMs}ms`)));
+    }, timeoutMs);
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    child.on("message", (message) => {
+      const parsed = message as QmdIndexWorkerMessage;
+      if (parsed.type === "progress") {
+        report?.({ phase: parsed.phase, message: parsed.message });
+      } else if (parsed.type === "result") {
+        finish(() => resolve(parsed.result));
+      } else if (parsed.type === "error") {
+        finish(() => reject(new Error(parsed.error)));
+      }
+    });
+    child.on("error", (error) => finish(() => reject(error)));
+    child.on("exit", (code, signal) => {
+      if (settled) return;
+      finish(() => reject(new Error(stderr.trim() || `QMD index worker exited with code ${code ?? "null"} signal ${signal ?? "null"}`)));
+    });
+  });
 }
 
 async function resolveDeepSearchWorker(): Promise<DeepSearchWorkerEntrypoint | undefined> {
