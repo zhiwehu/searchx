@@ -140,6 +140,10 @@ const fileTypeRules: FileTypeRule[] = [
 ];
 
 const timePatterns = [
+  /\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?/g,
+  /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b/g,
+  /\b\d{8}\b/g,
+  /(?:\d{4}\s*年\s*)?(?:今年|本年|去年|明年)?\s*\d{1,2}\s*月/g,
   /最近\s*\d+\s*天/g,
   /近\s*\d+\s*天/g,
   /过去\s*\d+\s*天/g,
@@ -148,15 +152,12 @@ const timePatterns = [
   /今天|今日|昨天|昨日|前天/g,
   /上周|上一周|本周|这周|这个周/g,
   /上个月|上一月|本月|这个月/g,
-  /今年|去年/g,
-  /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b/g,
-  /\b\d{8}\b/g,
-  /\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?/g
+  /今年|本年|去年|明年/g
 ];
 
 const fillerPatterns = [
   /帮我找到|帮我找|帮忙找|请帮我|麻烦帮我|我想要|想要|我想找|想找|我要找|查找|麻烦|帮忙|帮我|找到|找一下|找出|寻找|找找|找/g,
-  /文件|资料|内容|关于|包含|包括|查找|搜索|检索|查询|里面|中|里|有|的/g,
+  /文件|资料|内容|关于|包含|包括|查找|搜索|检索|查询|里面|中|里|有|的|去|到|给|从|在|跟|和|与/g,
   /\b(?:file|files|about|with|contains?|search|find|in)\b/gi
 ];
 
@@ -373,6 +374,7 @@ async function searchCatalogMatches(intent: SearchIntent, assets: IngestedAsset[
     const reasons: string[] = [];
     let rankScore = 0;
     let termMatched = false;
+    const matchedTerms = new Set<string>();
     let snippet: string | undefined;
 
     if (matchContains(metadata, intent.originalQuery)) {
@@ -389,10 +391,12 @@ async function searchCatalogMatches(intent: SearchIntent, assets: IngestedAsset[
       if (matchContains(asset.title, term)) {
         rankScore += 35;
         termMatched = true;
+        matchedTerms.add(term);
         reasons.push(`文件名匹配：${term}`);
       } else if (matchContains(asset.relativePath, term) || matchContains(asset.sourcePath, term)) {
         rankScore += 22;
         termMatched = true;
+        matchedTerms.add(term);
         reasons.push(`路径匹配：${term}`);
       }
     }
@@ -403,8 +407,15 @@ async function searchCatalogMatches(intent: SearchIntent, assets: IngestedAsset[
         rankScore += contentMatch.rankScore;
         termMatched = true;
         snippet = contentMatch.snippet;
+        for (const term of contentMatch.matchedTerms) matchedTerms.add(term);
         reasons.push(...contentMatch.reasons);
       }
+    }
+
+    if (matchedTerms.size > 1) {
+      const bonus = Math.min(36, (matchedTerms.size - 1) * 18);
+      rankScore += bonus;
+      reasons.push(`多关键词匹配：${matchedTerms.size}`);
     }
 
     if (intent.typeFilters.length > 0) {
@@ -451,11 +462,15 @@ function normalizeCatalogScore(rankScore: number): number {
   return Math.max(0.01, Math.min(0.99, rankScore / 100));
 }
 
-async function readMarkdownMatch(asset: IngestedAsset, intent: SearchIntent): Promise<{ rankScore: number; snippet?: string; reasons: string[] }> {
+async function readMarkdownMatch(
+  asset: IngestedAsset,
+  intent: SearchIntent
+): Promise<{ rankScore: number; snippet?: string; reasons: string[]; matchedTerms: string[] }> {
   try {
     const raw = await fs.readFile(asset.markdownPath, "utf8");
     const content = raw.length > metadataScanMaxBytes ? raw.slice(0, metadataScanMaxBytes) : raw;
     const reasons: string[] = [];
+    const matchedTerms = new Set<string>();
     let rankScore = 0;
     let snippet: string | undefined;
 
@@ -468,13 +483,14 @@ async function readMarkdownMatch(asset: IngestedAsset, intent: SearchIntent): Pr
     for (const term of intent.terms) {
       if (!matchContains(content, term)) continue;
       rankScore += 12;
+      matchedTerms.add(term);
       reasons.push(`Markdown 内容匹配：${term}`);
       snippet = snippet ?? snippetAround(content, term);
     }
 
-    return { rankScore, snippet, reasons };
+    return { rankScore, snippet, reasons, matchedTerms: Array.from(matchedTerms) };
   } catch {
-    return { rankScore: 0, reasons: [] };
+    return { rankScore: 0, reasons: [], matchedTerms: [] };
   }
 }
 
@@ -646,7 +662,7 @@ function mergeRankedResults(lists: SearchResultItem[][], limit: number): SearchR
   }
 
   return Array.from(merged.values())
-    .sort((a, b) => b.rankScore - a.rankScore || b.score - a.score)
+    .sort((a, b) => b.score - a.score || b.rankScore - a.rankScore)
     .slice(0, limit)
     .map(({ rankScore: _rankScore, ...item }) => item);
 }
@@ -738,6 +754,9 @@ function parseDateRange(query: string, now: Date): DateRange | undefined {
   const explicitDate = parseExplicitDate(query);
   if (explicitDate) return dayRange(explicitDate, "指定日期");
 
+  const monthRange = parseMonthRange(query, now);
+  if (monthRange) return monthRange;
+
   const recentDays = /(?:最近|近|过去)\s*(\d+)\s*天/.exec(query);
   if (recentDays) {
     const days = Math.max(1, Number.parseInt(recentDays[1], 10));
@@ -807,15 +826,44 @@ function parseDateRange(query: string, now: Date): DateRange | undefined {
       endMs: new Date(now.getFullYear(), 0, 1).getTime()
     };
   }
-  if (/今年/.test(query)) {
+  if (/今年|本年/.test(query)) {
     return {
       label: "今年",
       startMs: new Date(now.getFullYear(), 0, 1).getTime(),
       endMs: addDays(startOfDay(now), 1).getTime()
     };
   }
+  if (/明年/.test(query)) {
+    return {
+      label: "明年",
+      startMs: new Date(now.getFullYear() + 1, 0, 1).getTime(),
+      endMs: new Date(now.getFullYear() + 2, 0, 1).getTime()
+    };
+  }
 
   return undefined;
+}
+
+function parseMonthRange(query: string, now: Date): DateRange | undefined {
+  const explicit = /(\d{4})\s*年\s*(\d{1,2})\s*月/.exec(query);
+  if (explicit) return validMonthRange(Number.parseInt(explicit[1], 10), Number.parseInt(explicit[2], 10));
+
+  const relative = /(今年|本年|去年|明年)?\s*(\d{1,2})\s*月/.exec(query);
+  if (!relative) return undefined;
+
+  let year = now.getFullYear();
+  if (relative[1] === "去年") year -= 1;
+  if (relative[1] === "明年") year += 1;
+  return validMonthRange(year, Number.parseInt(relative[2], 10));
+}
+
+function validMonthRange(year: number, month: number): DateRange | undefined {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return undefined;
+  return {
+    label: `${year}年${month}月`,
+    startMs: new Date(year, month - 1, 1).getTime(),
+    endMs: new Date(year, month, 1).getTime()
+  };
 }
 
 function parseExplicitDate(query: string): Date | undefined {

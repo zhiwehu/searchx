@@ -28,6 +28,16 @@ test("analyzeSearchQuery extracts Chinese time, type, and semantic terms", () =>
   assert.equal(localDate(intent.dateRange?.endMs), "2026-06-01");
 });
 
+test("analyzeSearchQuery extracts relative month ranges before year ranges", () => {
+  const intent = analyzeSearchQuery("今年1月去北京给欧阳总汇报的cyberwing ppt", new Date(2026, 5, 8, 12));
+
+  assert.equal(intent.semanticQuery, "北京 欧阳总汇报 cyberwing");
+  assert.deepEqual(intent.typeFilters.map((filter) => filter.label), ["PPT"]);
+  assert.equal(intent.dateRange?.label, "2026年1月");
+  assert.equal(localDate(intent.dateRange?.startMs), "2026-01-01");
+  assert.equal(localDate(intent.dateRange?.endMs), "2026-02-01");
+});
+
 test("analyzeSearchQuery keeps content keywords after removing file type words", () => {
   const intent = analyzeSearchQuery("内容有麦克风的pdf");
 
