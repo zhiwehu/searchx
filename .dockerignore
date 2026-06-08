@@ -1,0 +1,11 @@
+.git
+.env
+.venv
+.searchx
+dist
+node_modules
+npm-debug.log
+Dockerfile
+docker-compose.override.yml
+searchx-data
+*.local

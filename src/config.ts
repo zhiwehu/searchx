@@ -21,6 +21,8 @@ export const config = {
   qmdCollection: process.env.SEARCHX_QMD_COLLECTION ?? "searchx",
   qmdEmbedOnIngest: !falseValues.has(process.env.SEARCHX_QMD_EMBED_ON_INGEST ?? ""),
   qmdChunkStrategy: process.env.SEARCHX_QMD_CHUNK_STRATEGY ?? "auto",
+  qmdUpdateTimeoutMs: Number.parseInt(process.env.SEARCHX_QMD_UPDATE_TIMEOUT_MS ?? "120000", 10),
+  qmdEmbedTimeoutMs: Number.parseInt(process.env.SEARCHX_QMD_EMBED_TIMEOUT_MS ?? "1800000", 10),
   pythonBin: process.env.SEARCHX_PYTHON ?? "python",
   converterScript: path.join(cwd, "python", "convert_markitdown.py"),
   converterTimeoutMs: Number.parseInt(process.env.SEARCHX_CONVERTER_TIMEOUT_MS ?? "120000", 10),

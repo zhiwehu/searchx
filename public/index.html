@@ -8,83 +8,276 @@
   </head>
   <body>
     <header class="topbar">
-      <div>
-        <h1>SearchX</h1>
-        <p>本地优先的多目录自然语言检索</p>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">SX</div>
+        <div>
+          <h1>SearchX</h1>
+          <p>本地优先的 AI 文件检索台</p>
+        </div>
       </div>
-      <div class="status" id="statusText">启动中</div>
+      <div class="topbar-actions">
+        <div class="status" id="statusText">启动中</div>
+        <button class="config-button" id="configButton" type="button" aria-haspopup="dialog" aria-controls="configDialog">
+          配置
+        </button>
+      </div>
     </header>
 
-    <main class="layout">
-      <aside class="sidebar">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>数据目录</h2>
-            <button class="ghost" id="refreshRootsButton" type="button">刷新</button>
+    <main class="chat-shell">
+      <section class="chat-feed" id="chatFeed" aria-live="polite">
+        <article class="message assistant">
+          <div class="avatar" aria-hidden="true">AI</div>
+          <div class="message-body">
+            <div class="message-kicker">SearchX 助手</div>
+            <p>今天要找哪份资料？</p>
           </div>
+        </article>
+      </section>
 
-          <form id="rootForm" class="root-form">
-            <label>
-              <span>目录路径</span>
-              <input id="rootPathInput" name="path" placeholder="例如 F:\资料 或 /Users/me/Documents" autocomplete="off" />
-            </label>
-            <label>
-              <span>名称</span>
-              <input id="rootNameInput" name="name" placeholder="可选" autocomplete="off" />
-            </label>
-            <label class="checkline">
-              <input id="recursiveInput" type="checkbox" checked />
-              <span>包含子目录</span>
-            </label>
-            <button type="submit">添加目录</button>
-          </form>
-
-          <div class="root-list" id="rootList"></div>
-        </section>
-
-        <section class="panel compact">
-          <h2>同步</h2>
-          <label class="checkline">
-            <input id="forceConvertInput" type="checkbox" />
-            <span>重新生成 Markdown</span>
-          </label>
-          <button id="syncButton" type="button">同步全部目录</button>
-          <div class="progress-wrap" id="progressWrap" hidden>
-            <div class="progress-row">
-              <span id="progressLabel">准备中</span>
-              <span id="progressPercent">0%</span>
-            </div>
-            <progress id="syncProgress" max="100" value="0"></progress>
-            <div class="progress-stats" id="progressStats"></div>
-          </div>
-          <p class="hint" id="storageHint"></p>
-        </section>
-      </aside>
-
-      <section class="workspace">
-        <form id="searchForm" class="searchbar">
-          <input id="queryInput" placeholder="搜索图片、音频、视频、PDF、Office、文本内容..." autocomplete="off" />
+      <form id="searchForm" class="chat-composer">
+        <div class="summary" id="summaryText" aria-live="polite"></div>
+        <div class="composer-row">
+          <input id="queryInput" placeholder="询问：最近的会议纪要、某张图片、某个 PDF 里的结论..." autocomplete="off" />
           <select id="modeSelect" aria-label="检索模式">
             <option value="lex">关键词</option>
-            <option value="deep" selected>自然语言</option>
+            <option value="deep" selected>智能检索</option>
           </select>
-          <button type="submit">搜索</button>
-        </form>
-
-        <div class="summary" id="summaryText">添加数据目录并同步后即可搜索。</div>
-
-        <div class="content-grid">
-          <section class="results" id="resultsList"></section>
-          <section class="preview">
-            <div class="preview-head">
-              <h2 id="previewTitle">预览</h2>
-              <a id="rawLink" href="#" target="_blank" rel="noreferrer" hidden>打开原文件</a>
-            </div>
-            <pre id="previewBody">选择一个结果查看 Markdown 摘要。</pre>
-          </section>
+          <button type="submit">发送</button>
         </div>
-      </section>
+      </form>
     </main>
+
+    <dialog class="modal" id="configDialog" aria-labelledby="configTitle">
+      <div class="modal-frame config-frame">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">SearchX</p>
+            <h2 id="configTitle">配置</h2>
+          </div>
+          <button class="modal-close" id="configCloseButton" type="button" aria-label="关闭配置" data-stay-enabled>
+            ×
+          </button>
+        </div>
+
+        <div class="settings-layout">
+          <nav class="settings-menu" aria-label="配置菜单">
+            <button class="settings-menu-item active" data-config-view="general" type="button">通用</button>
+            <button class="settings-menu-item" data-config-view="models" type="button">模型</button>
+            <button class="settings-menu-item" data-config-view="folders" type="button">文件夹</button>
+            <button class="settings-menu-item" data-config-view="tasks" type="button">后台任务</button>
+          </nav>
+
+          <div class="settings-pages">
+            <section class="settings-page active" data-config-panel="general">
+              <div class="section-head">
+                <h3>通用设置</h3>
+                <button class="ghost" id="refreshRootsButton" type="button">刷新</button>
+              </div>
+
+              <div class="metrics-grid">
+                <div class="metric">
+                  <span>目录</span>
+                  <strong id="metricRoots">0</strong>
+                </div>
+                <div class="metric">
+                  <span>文件</span>
+                  <strong id="metricAssets">0</strong>
+                </div>
+                <div class="metric">
+                  <span>索引文档</span>
+                  <strong id="metricIndexed">0</strong>
+                </div>
+                <div class="metric">
+                  <span>向量索引</span>
+                  <strong id="metricVector">未知</strong>
+                </div>
+              </div>
+
+              <form id="settingsForm" class="settings-form">
+                <label>
+                  <span>Python 命令</span>
+                  <input id="pythonBinInput" name="pythonBin" placeholder="python" autocomplete="off" />
+                </label>
+                <label>
+                  <span>QMD 分块策略</span>
+                  <select id="qmdChunkStrategyInput" name="qmdChunkStrategy">
+                    <option value="auto">auto</option>
+                    <option value="fixed">fixed</option>
+                    <option value="semantic">semantic</option>
+                  </select>
+                </label>
+                <label class="checkline">
+                  <input id="qmdEmbedOnIngestInput" name="qmdEmbedOnIngest" type="checkbox" />
+                  <span>同步后生成向量索引</span>
+                </label>
+                <label class="checkline">
+                  <input id="qmdForceCpuInput" name="qmdForceCpu" type="checkbox" />
+                  <span>QMD 强制使用 CPU</span>
+                </label>
+                <label>
+                  <span>QMD GPU</span>
+                  <input id="qmdLlamaGpuInput" name="qmdLlamaGpu" placeholder="auto" autocomplete="off" />
+                </label>
+                <div class="form-actions">
+                  <button type="submit">保存设置</button>
+                  <span class="hint" id="settingsSaveHint"></span>
+                </div>
+              </form>
+
+              <div class="system-notes">
+                <p class="hint" id="storageHint"></p>
+                <p class="hint" id="rawAccessHint"></p>
+              </div>
+            </section>
+
+            <section class="settings-page" data-config-panel="models">
+              <div class="section-head">
+                <h3>模型配置</h3>
+                <button class="ghost" id="reloadSettingsButton" type="button">重新读取</button>
+              </div>
+
+              <form id="modelSettingsForm" class="settings-form">
+                <div class="form-grid two">
+                  <label class="checkline">
+                    <input id="markitdownPluginsInput" name="markitdownPlugins" type="checkbox" />
+                    <span>MarkItDown 插件</span>
+                  </label>
+                  <label class="checkline">
+                    <input id="markitdownArchivesInput" name="markitdownArchives" type="checkbox" />
+                    <span>解析压缩包</span>
+                  </label>
+                  <label class="checkline">
+                    <input id="markitdownMediaInput" name="markitdownMedia" type="checkbox" />
+                    <span>解析音视频</span>
+                  </label>
+                  <label class="checkline">
+                    <input id="markitdownUseLlmInput" name="markitdownUseLlm" type="checkbox" />
+                    <span>转换时调用 LLM/VLM</span>
+                  </label>
+                </div>
+
+                <label>
+                  <span>OpenAI Base URL</span>
+                  <input id="openaiBaseUrlInput" name="openaiBaseUrl" placeholder="https://api.openai.com/v1" autocomplete="off" />
+                </label>
+                <label>
+                  <span>OpenAI API Key</span>
+                  <input id="openaiApiKeyInput" name="openaiApiKey" type="password" autocomplete="off" />
+                </label>
+                <label>
+                  <span>转换模型</span>
+                  <input id="llmModelInput" name="llmModel" placeholder="gpt-4.1-mini" autocomplete="off" />
+                </label>
+                <label>
+                  <span>转换提示词</span>
+                  <textarea id="llmPromptInput" name="llmPrompt" rows="4"></textarea>
+                </label>
+
+                <div class="form-grid three">
+                  <label>
+                    <span>Embedding 模型</span>
+                    <input id="qmdEmbedModelInput" name="qmdEmbedModel" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>Rerank 模型</span>
+                    <input id="qmdRerankModelInput" name="qmdRerankModel" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>Generate 模型</span>
+                    <input id="qmdGenerateModelInput" name="qmdGenerateModel" autocomplete="off" />
+                  </label>
+                </div>
+
+                <div class="form-actions">
+                  <button type="submit">保存模型配置</button>
+                  <span class="hint" id="modelSaveHint"></span>
+                </div>
+              </form>
+
+              <div class="model-notes" id="modelNotes"></div>
+            </section>
+
+            <section class="settings-page" data-config-panel="folders">
+              <div class="section-head">
+                <h3>文件夹配置</h3>
+                <button class="ghost" id="refreshFoldersButton" type="button">刷新</button>
+              </div>
+
+              <form id="rootForm" class="root-form">
+                <div class="form-grid two">
+                  <label>
+                    <span>目录路径</span>
+                    <input id="rootPathInput" name="path" placeholder="例如 F:\资料 或 /Users/me/Documents" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>名称</span>
+                    <input id="rootNameInput" name="name" placeholder="可选" autocomplete="off" />
+                  </label>
+                </div>
+                <label class="checkline">
+                  <input id="recursiveInput" type="checkbox" checked />
+                  <span>包含子目录</span>
+                </label>
+                <button type="submit">添加目录</button>
+              </form>
+
+              <div class="root-list" id="rootList"></div>
+            </section>
+
+            <section class="settings-page" data-config-panel="tasks">
+              <div class="section-head">
+                <h3>后台任务</h3>
+                <button id="syncButton" type="button">同步全部目录</button>
+              </div>
+              <label class="checkline">
+                <input id="forceConvertInput" type="checkbox" />
+                <span>重新生成 Markdown</span>
+              </label>
+              <div class="task-summary" id="taskSummary">当前没有运行中的同步任务。</div>
+              <div class="progress-wrap" id="progressWrap" hidden>
+                <div class="progress-row">
+                  <span id="progressLabel">准备中</span>
+                  <span id="progressPercent">0%</span>
+                </div>
+                <progress id="syncProgress" max="100" value="0"></progress>
+                <div class="progress-stats" id="progressStats"></div>
+              </div>
+              <div class="qmd-status" id="qmdStatus"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="modal preview-modal" id="previewDialog" aria-labelledby="previewTitle">
+      <div class="modal-frame preview-frame-shell">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow" id="previewCounter">文件预览</p>
+            <h2 id="previewTitle">文件详情</h2>
+          </div>
+          <button class="modal-close" id="previewCloseButton" type="button" aria-label="关闭预览" data-stay-enabled>
+            ×
+          </button>
+        </div>
+        <div class="preview-toolbar">
+          <button class="preview-nav" id="previewPrevButton" type="button" aria-label="上一个文件" data-stay-enabled>‹</button>
+          <div class="detail-meta" id="detailMeta"></div>
+          <div class="detail-actions">
+            <button class="info-toggle" id="markdownToggleButton" type="button" aria-label="查看技术信息" title="查看技术信息" aria-expanded="false" data-stay-enabled>!</button>
+            <a id="downloadLink" href="#" hidden>下载</a>
+          </div>
+          <button class="preview-nav" id="previewNextButton" type="button" aria-label="下一个文件" data-stay-enabled>›</button>
+        </div>
+        <div class="preview-stage" id="previewStage"></div>
+        <section class="markdown-panel" id="markdownPanel" hidden>
+          <div class="section-head">
+            <h3>技术信息</h3>
+          </div>
+          <pre class="markdown-body" id="markdownBody">技术信息内容</pre>
+        </section>
+      </div>
+    </dialog>
 
     <script type="module" src="/app.js"></script>
   </body>

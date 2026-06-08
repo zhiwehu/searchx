@@ -32,8 +32,23 @@ type DeepSearchWorkerEntrypoint = {
   execArgv: string[];
 };
 
+type QmdIndexWorkerEntrypoint = {
+  path: string;
+  execArgv: string[];
+};
+
 type DeepSearchWorkerMessage =
   | { type: "result"; results: unknown[] }
+  | { type: "error"; error: string };
+
+type QmdIndexProgress = {
+  phase: "indexing" | "embedding";
+  message: string;
+};
+
+type QmdIndexWorkerMessage =
+  | { type: "progress"; phase: "indexing" | "embedding"; message: string }
+  | { type: "result"; result: unknown }
   | { type: "error"; error: string };
 
 type SearchIntent = {
@@ -157,11 +172,28 @@ export async function closeQmdStore(): Promise<void> {
   storePromise = undefined;
 }
 
-export async function refreshQmdIndex(options: { embed?: boolean; force?: boolean } = {}): Promise<unknown> {
+export async function refreshQmdIndex(
+  options: { embed?: boolean; force?: boolean } = {},
+  report?: (progress: QmdIndexProgress) => void
+): Promise<unknown> {
   await fs.mkdir(config.markdownDir, { recursive: true });
+  const worker = await resolveQmdIndexWorker();
+  if (worker) {
+    await closeQmdStore();
+    return runQmdIndexWorker(worker, options, report);
+  }
+
   const store = await getQmdStore();
   const update = await store.update({
-    collections: [config.qmdCollection]
+    collections: [config.qmdCollection],
+    onProgress: (info: Record<string, unknown>) => {
+      const current = typeof info.current === "number" ? info.current : 0;
+      const total = typeof info.total === "number" ? info.total : 0;
+      report?.({
+        phase: "indexing",
+        message: total > 0 ? `刷新 QMD 文本索引：${current}/${total}` : "刷新 QMD 文本索引。"
+      });
+    }
   });
 
   if (!options.embed) {
@@ -170,7 +202,16 @@ export async function refreshQmdIndex(options: { embed?: boolean; force?: boolea
 
   const embed = await store.embed({
     force: options.force === true,
-    chunkStrategy: config.qmdChunkStrategy
+    chunkStrategy: config.qmdChunkStrategy,
+    onProgress: (info: Record<string, unknown>) => {
+      const chunksEmbedded = typeof info.chunksEmbedded === "number" ? info.chunksEmbedded : 0;
+      const totalChunks = typeof info.totalChunks === "number" ? info.totalChunks : 0;
+      const errors = typeof info.errors === "number" ? info.errors : 0;
+      report?.({
+        phase: "embedding",
+        message: `生成 QMD 向量索引：chunks ${chunksEmbedded}/${totalChunks}${errors > 0 ? `, errors ${errors}` : ""}`
+      });
+    }
   });
   return { update, embed };
 }
@@ -196,7 +237,7 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
       throw Object.assign(new Error("还没有向量索引。请先重新同步，或调用 /api/index 生成向量索引。"), { statusCode: 400 });
     }
     mode = "lex";
-    warning = "还没有生成 QMD 向量索引，本次已自动降级为关键词检索。重新同步或调用 /api/index 生成向量索引后，自然语言模式会更准。";
+    warning = "还没有生成 QMD 向量索引，本次已自动降级为关键词检索。重新同步或调用 /api/index 生成向量索引后，智能检索会更准。";
   }
 
   const assets = await catalog.list();
@@ -214,7 +255,7 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
     } else if (mode === "hybrid") {
       const qmdResults = await searchFastHybrid(store, semanticQuery, { limit, minScore }, assets, intent);
       results = mergeRankedResults([catalogResults, qmdResults], limit);
-      warning = warning ?? "快速自然语言模式使用关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
+      warning = warning ?? "快速混合模式使用关键词 + 向量，不触发 QMD rerank/query-expansion 大模型。";
     } else {
       const rawResults = await searchDeep(store, {
         query: semanticQuery,
@@ -233,13 +274,13 @@ export async function searchQmd(request: SearchRequest): Promise<SearchResponse>
         const qmdResults = await searchFastHybrid(store, semanticQuery, { limit, minScore }, assets, intent);
         results = mergeRankedResults([catalogResults, qmdResults], limit);
         mode = "hybrid";
-        warning = `深度自然语言检索暂不可用，本次已降级为快速混合检索：${errorMessage(error)}`;
+        warning = `深度检索暂不可用，本次已降级为快速混合检索：${errorMessage(error)}`;
       } catch (fallbackError) {
         const rawResults = await store.searchLex(semanticQuery, { limit, minScore, collection: config.qmdCollection });
         const qmdResults = filterResultsByIntent(rawResults.map((result) => normalizeResult(result, assets)), intent);
         results = mergeRankedResults([catalogResults, qmdResults], limit);
         mode = "lex";
-        warning = `深度自然语言检索暂不可用，快速混合检索也失败，本次已降级为关键词检索：${errorMessage(fallbackError)}`;
+        warning = `深度检索暂不可用，快速混合检索也失败，本次已降级为关键词检索：${errorMessage(fallbackError)}`;
       }
     } else if (mode === "hybrid") {
       const rawResults = await store.searchLex(semanticQuery, { limit, minScore, collection: config.qmdCollection });
@@ -858,6 +899,71 @@ async function searchDeep(store: QmdStore, options: DeepSearchOptions): Promise<
   const worker = await resolveDeepSearchWorker();
   if (!worker) return store.search(options);
   return runDeepSearchWorker(worker, options);
+}
+
+async function resolveQmdIndexWorker(): Promise<QmdIndexWorkerEntrypoint | undefined> {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const jsWorkerPath = path.join(dir, "qmdIndexWorker.js");
+  if (await pathExists(jsWorkerPath)) {
+    return { path: jsWorkerPath, execArgv: [] };
+  }
+
+  const tsWorkerPath = path.join(dir, "qmdIndexWorker.ts");
+  if (await pathExists(tsWorkerPath)) {
+    return { path: tsWorkerPath, execArgv: process.execArgv };
+  }
+
+  return undefined;
+}
+
+function runQmdIndexWorker(
+  worker: QmdIndexWorkerEntrypoint,
+  options: { embed?: boolean; force?: boolean },
+  report?: (progress: QmdIndexProgress) => void
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stderr = "";
+    const encoded = Buffer.from(JSON.stringify(options), "utf8").toString("base64url");
+    const child = fork(worker.path, [encoded], {
+      cwd: config.cwd,
+      env: process.env,
+      execArgv: worker.execArgv,
+      stdio: ["ignore", "ignore", "pipe", "ipc"]
+    });
+    const timeoutMs = options.embed ? config.qmdEmbedTimeoutMs : config.qmdUpdateTimeoutMs;
+    const timeout = setTimeout(() => {
+      killProcessTree(child);
+      finish(() => reject(new Error(`QMD ${options.embed ? "embed" : "update"} timed out after ${timeoutMs}ms`)));
+    }, timeoutMs);
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    child.on("message", (message) => {
+      const parsed = message as QmdIndexWorkerMessage;
+      if (parsed.type === "progress") {
+        report?.({ phase: parsed.phase, message: parsed.message });
+      } else if (parsed.type === "result") {
+        finish(() => resolve(parsed.result));
+      } else if (parsed.type === "error") {
+        finish(() => reject(new Error(parsed.error)));
+      }
+    });
+    child.on("error", (error) => finish(() => reject(error)));
+    child.on("exit", (code, signal) => {
+      if (settled) return;
+      finish(() => reject(new Error(stderr.trim() || `QMD index worker exited with code ${code ?? "null"} signal ${signal ?? "null"}`)));
+    });
+  });
 }
 
 async function resolveDeepSearchWorker(): Promise<DeepSearchWorkerEntrypoint | undefined> {
