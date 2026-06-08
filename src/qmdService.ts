@@ -565,6 +565,7 @@ async function createQmdStore(): Promise<QmdStore> {
 
 function normalizeResult(result: unknown, assets: IngestedAsset[]): SearchResultItem {
   const record = asRecord(result);
+  const rawScore = typeof record.score === "number" ? record.score : 0;
   const markdownPath = firstString(
     record.markdownPath,
     record.filepath,
@@ -580,13 +581,19 @@ function normalizeResult(result: unknown, assets: IngestedAsset[]): SearchResult
   return {
     id,
     title: firstString(record.title, asRecord(record.document).title, source?.title, markdownPath, "Untitled") ?? "Untitled",
-    score: typeof record.score === "number" ? record.score : 0,
+    score: normalizeSearchScore(rawScore),
     snippet: compactSnippet(firstString(record.snippet, record.text, record.content, record.body)),
     displayPath: firstString(source?.relativePath, record.displayPath, record.path, source?.sourcePath),
     markdownPath: source?.markdownPath ?? markdownPath,
     source,
     raw: compactRaw(result)
   };
+}
+
+function normalizeSearchScore(score: number): number {
+  if (!Number.isFinite(score) || score <= 0) return 0;
+  if (score <= 1) return score;
+  return Math.min(0.99, score / 100);
 }
 
 async function searchFastHybrid(
@@ -621,10 +628,12 @@ function mergeRankedResults(lists: SearchResultItem[][], limit: number): SearchR
   const merged = new Map<string, SearchResultItem & { rankScore: number }>();
   const rankK = 60;
 
-  for (const list of lists) {
+  for (let listIndex = 0; listIndex < lists.length; listIndex += 1) {
+    const list = lists[listIndex];
+    const listPriority = (lists.length - listIndex) * 1e-6;
     list.forEach((item, index) => {
       const key = item.id ?? item.markdownPath ?? item.displayPath ?? item.title;
-      const rankScore = 1 / (rankK + index + 1);
+      const rankScore = 1 / (rankK + index + 1) + listPriority;
       const existing = merged.get(key);
       if (existing) {
         existing.rankScore += rankScore;
