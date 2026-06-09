@@ -541,7 +541,6 @@ function renderFilePreview(result) {
     return `
       <div class="file-thumb">
         <img class="file-thumb-media" src="${previewUrl}" alt="${title}" loading="lazy" decoding="async" />
-        <span class="preview-badge">${kind === "image" ? "缩略图" : "预览"}</span>
       </div>
       ${fallback}
     `;
@@ -551,7 +550,6 @@ function renderFilePreview(result) {
     return `
       <div class="file-thumb">
         <iframe class="file-thumb-frame" src="${previewUrl}" title="${title}" loading="lazy"></iframe>
-        <span class="preview-badge">文档</span>
       </div>
       ${fallback}
     `;
